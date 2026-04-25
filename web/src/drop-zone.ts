@@ -47,7 +47,7 @@ export function initDropZone(options: DropZoneOptions): void {
     fileInput?.addEventListener('change', () => {
         const file = fileInput.files?.[0];
         if (!file) return;
-        if (!file.name.endsWith('.map')) {
+        if (!file.name.toLowerCase().endsWith('.map')) {
             onError('Only .map files are supported');
             return;
         }

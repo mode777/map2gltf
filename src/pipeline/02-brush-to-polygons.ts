@@ -94,7 +94,7 @@ function polygonArea(vertices: Vec3[]): number {
     return 0.5 * vec3.length(crossSum);
 }
 
-export function brushToPolygons(brush: ParsedBrush, brushIndex: number): ConvexPolygon[] {
+export function brushToPolygons(brush: ParsedBrush, brushIndex: number, entityIndex: number = 0): ConvexPolygon[] {
     const result: ConvexPolygon[] = [];
 
     for (let fi = 0; fi < brush.faces.length; fi++) {
@@ -125,6 +125,7 @@ export function brushToPolygons(brush: ParsedBrush, brushIndex: number): ConvexP
             vertices: poly,
             face,
             brushIndex,
+            entityIndex,
         });
     }
 

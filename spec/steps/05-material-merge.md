@@ -22,13 +22,15 @@ Per material, a single contiguous vertex buffer and index buffer are built.
 ```typescript
 interface MaterialBatch {
     materialID: number;
-    textureName: string;   // the texture name this batch corresponds to
-    vertices: Vertex[];    // all vertices for this material
-    indices: number[];     // triangle indices into vertices[]
+    textureName: string;           // the texture name this batch corresponds to
+    vertices: Vertex[];            // all vertices for this material
+    indices: number[];             // triangle indices into vertices[]
+    triangleEntityIndices: number[]; // entity index per triangle (propagated from TriangulatedMesh)
+    triangleBrushIndices: number[];  // brush index per triangle (propagated from TriangulatedMesh)
 }
 ```
 
-> **Implementation note:** The `textureName` field is stored alongside `materialID` so that the GLB exporter (Step 8) can create named glTF materials without reverse-mapping IDs to names.
+> **Implementation note:** The `textureName` field is stored alongside `materialID` so that the GLB exporter (Step 8) can create named glTF materials without reverse-mapping IDs to names. The `triangleEntityIndices` and `triangleBrushIndices` arrays are propagated from `TriangulatedMesh` for use by the clustering step (Step 6).
 
 ---
 

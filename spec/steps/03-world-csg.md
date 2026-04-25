@@ -74,8 +74,11 @@ interface ConvexPolygon {
     vertices: Vec3[];       // CCW winding, length ≥ 3
     face: ParsedFace;       // originating face (for normal, texture axes, material)
     brushIndex: number;     // index of the source brush
+    entityIndex: number;    // 0 = worldspawn (only worldspawn enters CSG)
 }
 ```
+
+> **Implementation note:** The `entityIndex` field is propagated through fragment creation. Since only worldspawn polygons enter CSG, all outputs retain `entityIndex: 0`.
 
 ---
 

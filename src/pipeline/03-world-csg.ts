@@ -88,10 +88,10 @@ function splitPolygon(
     }
 
     const front = frontVerts.length >= 3
-        ? { vertices: frontVerts, face: poly.face, brushIndex: poly.brushIndex }
+        ? { vertices: frontVerts, face: poly.face, brushIndex: poly.brushIndex, entityIndex: poly.entityIndex }
         : null;
     const back = backVerts.length >= 3
-        ? { vertices: backVerts, face: poly.face, brushIndex: poly.brushIndex }
+        ? { vertices: backVerts, face: poly.face, brushIndex: poly.brushIndex, entityIndex: poly.entityIndex }
         : null;
 
     return { front, back };

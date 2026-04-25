@@ -1,4 +1,4 @@
-import type { MaterialBatch, Cluster, Vertex, Vec3 } from '../types.js';
+import type { MaterialBatch, Cluster, Vertex, Vec3, Diagnostics } from '../types.js';
 import { aabbFromPoints } from '../math/aabb.js';
 import * as vec3 from '../math/vec3.js';
 
@@ -218,6 +218,75 @@ function enforceMaxSize(triangles: number[], batch: MaterialBatch, maxSize: numb
     ];
 }
 
+// --- Brush-intact variants for worldspawn clustering ---
+
+interface BrushGroup {
+    brushIndex: number;
+    triangles: number[];
+    centroid: Vec3;
+}
+
+function groupByBrush(triangles: number[], batch: MaterialBatch): BrushGroup[] {
+    const map = new Map<number, number[]>();
+    for (const ti of triangles) {
+        const bi = batch.triangleBrushIndices[ti]!;
+        let list = map.get(bi);
+        if (!list) { list = []; map.set(bi, list); }
+        list.push(ti);
+    }
+
+    const groups: BrushGroup[] = [];
+    for (const [brushIndex, tris] of map) {
+        const centroids = tris.map(ti => triangleCentroid(batch.vertices, batch.indices, ti));
+        let sum: Vec3 = { x: 0, y: 0, z: 0 };
+        for (const c of centroids) sum = vec3.add(sum, c);
+        const centroid = vec3.scale(sum, 1 / centroids.length);
+        groups.push({ brushIndex, triangles: tris, centroid });
+    }
+    return groups;
+}
+
+function enforceMaxSizeByBrush(
+    brushGroups: BrushGroup[],
+    maxSize: number,
+    diagnostics?: Diagnostics,
+): BrushGroup[][] {
+    const totalTris = brushGroups.reduce((s, bg) => s + bg.triangles.length, 0);
+    if (totalTris <= maxSize) return [brushGroups];
+
+    // If only one brush group, it can't be split further — keep as-is
+    if (brushGroups.length <= 1) {
+        if (diagnostics && totalTris > maxSize) {
+            diagnostics.warnings.push({
+                step: '06-clustering',
+                message: `Single brush (index ${brushGroups[0]?.brushIndex ?? '?'}) has ${totalTris} triangles, exceeding maxClusterSize ${maxSize}. Keeping intact.`,
+            });
+        }
+        return [brushGroups];
+    }
+
+    // Bisect brush groups along longest axis
+    const allCentroids = brushGroups.map(bg => bg.centroid);
+    const aabb = aabbFromPoints(allCentroids);
+    const dx = aabb.max.x - aabb.min.x;
+    const dy = aabb.max.y - aabb.min.y;
+    const dz = aabb.max.z - aabb.min.z;
+
+    let axis: 'x' | 'y' | 'z' = 'x';
+    if (dy >= dx && dy >= dz) axis = 'y';
+    else if (dz >= dx && dz >= dy) axis = 'z';
+
+    const sorted = [...brushGroups].sort((a, b) => a.centroid[axis] - b.centroid[axis]);
+    const mid = Math.floor(sorted.length / 2);
+    const left = sorted.slice(0, mid);
+    const right = sorted.slice(mid);
+
+    return [
+        ...enforceMaxSizeByBrush(left, maxSize, diagnostics),
+        ...enforceMaxSizeByBrush(right, maxSize, diagnostics),
+    ];
+}
+
 function buildCluster(triangles: number[], batch: MaterialBatch): Cluster {
     // Collect unique vertices referenced by these triangles
     const vertexMap = new Map<number, number>();
@@ -252,7 +321,50 @@ function buildCluster(triangles: number[], batch: MaterialBatch): Cluster {
     };
 }
 
-export function clusterGeometry(batches: MaterialBatch[], options?: Partial<ClusterOptions>): Cluster[] {
+function clusterWorldspawn(
+    worldTriangles: number[],
+    batch: MaterialBatch,
+    gridCellSize: number,
+    maxClusterSize: number,
+    minClusterSize: number,
+    diagnostics?: Diagnostics,
+): PendingCluster[] {
+    if (worldTriangles.length === 0) return [];
+
+    // Group triangles by brush
+    const brushGroups = groupByBrush(worldTriangles, batch);
+
+    // Assign each brush group to a grid cell based on brush centroid
+    const cellMap = new Map<string, BrushGroup[]>();
+    for (const bg of brushGroups) {
+        const key = getCellKey(bg.centroid, gridCellSize);
+        let list = cellMap.get(key);
+        if (!list) { list = []; cellMap.set(key, list); }
+        list.push(bg);
+    }
+
+    // Build candidate clusters per cell, enforcing max size at brush boundaries
+    const pending: PendingCluster[] = [];
+    for (const [, cellBrushGroups] of cellMap) {
+        const splits = enforceMaxSizeByBrush(cellBrushGroups, maxClusterSize, diagnostics);
+        for (const brushGroupSet of splits) {
+            const triangles = brushGroupSet.flatMap(bg => bg.triangles);
+            pending.push({
+                materialID: batch.materialID,
+                triangles,
+                batch,
+            });
+        }
+    }
+
+    return pending;
+}
+
+export function clusterGeometry(
+    batches: MaterialBatch[],
+    options?: Partial<ClusterOptions>,
+    diagnostics?: Diagnostics,
+): Cluster[] {
     const gridCellSize = options?.gridCellSize ?? DEFAULT_GRID_CELL_SIZE;
     const maxClusterSize = options?.maxClusterSize ?? DEFAULT_MAX_CLUSTER_SIZE;
     const minClusterSize = options?.minClusterSize ?? DEFAULT_MIN_CLUSTER_SIZE;
@@ -262,33 +374,39 @@ export function clusterGeometry(batches: MaterialBatch[], options?: Partial<Clus
     for (const batch of batches) {
         const triCount = batch.indices.length / 3;
 
-        // Assign each triangle to a grid cell
-        const cellMap = new Map<string, number[]>();
+        // Partition triangles by entity
+        const worldTriangles: number[] = [];
+        const entityGroups = new Map<number, number[]>();
+
         for (let tri = 0; tri < triCount; tri++) {
-            const c = triangleCentroid(batch.vertices, batch.indices, tri);
-            const key = getCellKey(c, gridCellSize);
-            let list = cellMap.get(key);
-            if (!list) {
-                list = [];
-                cellMap.set(key, list);
+            const entityIdx = batch.triangleEntityIndices[tri];
+            if (entityIdx === 0 || entityIdx === undefined) {
+                worldTriangles.push(tri);
+            } else {
+                let list = entityGroups.get(entityIdx);
+                if (!list) { list = []; entityGroups.set(entityIdx, list); }
+                list.push(tri);
             }
-            list.push(tri);
         }
 
-        // Build candidate clusters per cell, enforcing max size
-        for (const [, triangles] of cellMap) {
-            const splits = enforceMaxSize(triangles, batch, maxClusterSize);
-            for (const split of splits) {
-                allPending.push({
-                    materialID: batch.materialID,
-                    triangles: split,
-                    batch,
-                });
-            }
+        // A) Worldspawn: brush-intact spatial grid clustering
+        const worldPending = clusterWorldspawn(
+            worldTriangles, batch, gridCellSize, maxClusterSize, minClusterSize, diagnostics,
+        );
+        allPending.push(...worldPending);
+
+        // B) Non-worldspawn: one cluster per entity per material (no splitting)
+        for (const [, triangles] of entityGroups) {
+            allPending.push({
+                materialID: batch.materialID,
+                triangles,
+                batch,
+            });
         }
     }
 
-    // Merge undersized clusters into nearest same-material neighbor
+    // Merge undersized worldspawn clusters into nearest same-material neighbor
+    // (only worldspawn clusters participate in merging)
     let changed = true;
     while (changed) {
         changed = false;
@@ -296,18 +414,30 @@ export function clusterGeometry(batches: MaterialBatch[], options?: Partial<Clus
             const cluster = allPending[i]!;
             if (cluster.triangles.length >= minClusterSize) continue;
 
-            // Find nearest same-material neighbor
+            // Skip non-worldspawn clusters (they must not be merged)
+            const isWorldspawn = cluster.triangles.every(
+                ti => (cluster.batch.triangleEntityIndices[ti] ?? 0) === 0,
+            );
+            if (!isWorldspawn) continue;
+
+            // Find nearest same-material worldspawn neighbor
             let bestDist = Infinity;
             let bestIdx = -1;
-            const cA = clusterCentroid(cluster);
+            const cA = pendingClusterCentroid(cluster);
 
             for (let j = 0; j < allPending.length; j++) {
                 if (i === j) continue;
                 const other = allPending[j]!;
                 if (other.materialID !== cluster.materialID) continue;
+
+                // Only merge with other worldspawn clusters
+                const otherIsWorldspawn = other.triangles.every(
+                    ti => (other.batch.triangleEntityIndices[ti] ?? 0) === 0,
+                );
+                if (!otherIsWorldspawn) continue;
                 if (other.triangles.length + cluster.triangles.length > maxClusterSize) continue;
 
-                const cB = clusterCentroid(other);
+                const cB = pendingClusterCentroid(other);
                 const dist = vec3.length(vec3.sub(cA, cB));
                 if (dist < bestDist) {
                     bestDist = dist;
@@ -327,7 +457,7 @@ export function clusterGeometry(batches: MaterialBatch[], options?: Partial<Clus
     return allPending.map(p => buildCluster(p.triangles, p.batch));
 }
 
-function clusterCentroid(c: PendingCluster): Vec3 {
+function pendingClusterCentroid(c: PendingCluster): Vec3 {
     const centroids = c.triangles.map(ti =>
         triangleCentroid(c.batch.vertices, c.batch.indices, ti),
     );

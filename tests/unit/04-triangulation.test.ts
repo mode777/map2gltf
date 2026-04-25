@@ -4,7 +4,7 @@ import type { ConvexPolygon, Vec3 } from '../../src/types.js';
 import { createDiagnostics } from '../../src/types.js';
 import * as vec3 from '../../src/math/vec3.js';
 
-function makePoly(vertices: Vec3[], textureName = 'test'): ConvexPolygon {
+function makePoly(vertices: Vec3[], textureName = 'test', brushIndex = 0, entityIndex = 0): ConvexPolygon {
     return {
         vertices,
         face: {
@@ -19,7 +19,8 @@ function makePoly(vertices: Vec3[], textureName = 'test'): ConvexPolygon {
             texScaleU: 1,
             texScaleV: 1,
         },
-        brushIndex: 0,
+        brushIndex,
+        entityIndex,
     };
 }
 
@@ -81,6 +82,7 @@ describe('04-triangulation', () => {
                 texScaleV: 1,
             },
             brushIndex: 0,
+            entityIndex: 0,
         };
         const mesh = triangulate([poly], new Map());
         for (const v of mesh.vertices) {
@@ -120,6 +122,7 @@ describe('04-triangulation', () => {
                 texScaleV: 1,
             },
             brushIndex: 0,
+            entityIndex: 0,
         };
         const mesh = triangulate([poly], new Map());
         // At (64, 0, 0): u = dot((64,0,0), (s,s,0))/1/64 = 64*s/64 = s ≈ 0.707
@@ -150,5 +153,57 @@ describe('04-triangulation', () => {
             expect(idx).toBeGreaterThanOrEqual(0);
             expect(idx).toBeLessThan(mesh.vertices.length);
         }
+    });
+
+    it('should produce triangleEntityIndices and triangleBrushIndices arrays', () => {
+        const poly1 = makePoly(
+            [{ x: 0, y: 0, z: 0 }, { x: 64, y: 0, z: 0 }, { x: 64, y: 64, z: 0 }, { x: 0, y: 64, z: 0 }],
+            'test', 0, 0,
+        );
+        const poly2 = makePoly(
+            [{ x: 100, y: 0, z: 0 }, { x: 164, y: 0, z: 0 }, { x: 164, y: 64, z: 0 }],
+            'test', 1, 1,
+        );
+        const poly3 = makePoly(
+            [{ x: 200, y: 0, z: 0 }, { x: 264, y: 0, z: 0 }, { x: 264, y: 64, z: 0 }],
+            'test', 2, 2,
+        );
+        const mesh = triangulate([poly1, poly2, poly3], new Map());
+        const triCount = mesh.indices.length / 3;
+        expect(mesh.triangleEntityIndices).toHaveLength(triCount);
+        expect(mesh.triangleBrushIndices).toHaveLength(triCount);
+    });
+
+    it('should assign correct entityIndex per triangle', () => {
+        const poly0 = makePoly(
+            [{ x: 0, y: 0, z: 0 }, { x: 64, y: 0, z: 0 }, { x: 64, y: 64, z: 0 }],
+            'test', 0, 0,
+        );
+        const poly1 = makePoly(
+            [{ x: 100, y: 0, z: 0 }, { x: 164, y: 0, z: 0 }, { x: 164, y: 64, z: 0 }],
+            'test', 1, 1,
+        );
+        const mesh = triangulate([poly0, poly1], new Map());
+        expect(mesh.triangleEntityIndices[0]).toBe(0);
+        expect(mesh.triangleEntityIndices[1]).toBe(1);
+    });
+
+    it('should assign correct brushIndex per triangle', () => {
+        const poly0 = makePoly(
+            [{ x: 0, y: 0, z: 0 }, { x: 64, y: 0, z: 0 }, { x: 64, y: 64, z: 0 }],
+            'test', 5, 0,
+        );
+        const poly1 = makePoly(
+            [{ x: 100, y: 0, z: 0 }, { x: 164, y: 0, z: 0 }, { x: 164, y: 64, z: 0 }],
+            'test', 7, 0,
+        );
+        const poly2 = makePoly(
+            [{ x: 200, y: 0, z: 0 }, { x: 264, y: 0, z: 0 }, { x: 264, y: 64, z: 0 }],
+            'test', 5, 0,
+        );
+        const mesh = triangulate([poly0, poly1, poly2], new Map());
+        expect(mesh.triangleBrushIndices[0]).toBe(5);
+        expect(mesh.triangleBrushIndices[1]).toBe(7);
+        expect(mesh.triangleBrushIndices[2]).toBe(5);
     });
 });

@@ -81,6 +81,7 @@ export interface ConvexPolygon {
     readonly vertices: Vec3[];
     readonly face: ParsedFace;
     readonly brushIndex: number;
+    readonly entityIndex: number;
 }
 
 export interface Vertex {
@@ -93,6 +94,8 @@ export interface TriangulatedMesh {
     readonly vertices: Vertex[];
     readonly indices: number[];
     readonly triangleMaterials: string[];
+    readonly triangleEntityIndices: number[];
+    readonly triangleBrushIndices: number[];
 }
 
 export interface MaterialBatch {
@@ -100,6 +103,8 @@ export interface MaterialBatch {
     readonly textureName: string;
     readonly vertices: Vertex[];
     readonly indices: number[];
+    readonly triangleEntityIndices: number[];
+    readonly triangleBrushIndices: number[];
 }
 
 export interface Cluster {

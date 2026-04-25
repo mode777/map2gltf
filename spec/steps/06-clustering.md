@@ -6,9 +6,12 @@
 
 ## Overview
 
-Group triangles within each material batch into spatially coherent clusters that serve as the fundamental culling and draw-call unit.
+Group triangles within each material batch into spatially coherent clusters that serve as the fundamental culling and draw-call unit. Clustering is **entity-aware** and **brush-intact**:
 
-**Input:** `MaterialBatch[]` (from [Step 5](05-material-merge.md))
+- **Worldspawn** (entity index 0) brushes are spatially clustered using a uniform 3D grid, but a single brush is never split across clusters.
+- **Non-worldspawn entities** (entity index ≥ 1) produce one cluster per entity per material batch — no spatial subdivision.
+
+**Input:** `MaterialBatch[]` (from [Step 5](05-material-merge.md)), each batch carrying `triangleEntityIndices` and `triangleBrushIndices` metadata arrays.
 **Output:** `Cluster[]`
 
 ---
@@ -25,34 +28,42 @@ interface Cluster {
 }
 ```
 
-> **Implementation note:** The original design used index ranges (`firstIndex`, `indexCount`) into a shared material batch buffer. The implementation instead stores **independent, compacted vertex and index buffers per cluster**. This simplifies the GLB exporter — each cluster can be written as an independent glTF primitive without computing offsets into a shared buffer. The `triangleIndices` field records which source triangles belong to this cluster (for debugging and traceability).
+> **Implementation note:** Each cluster stores independent, compacted vertex and index buffers. This simplifies the GLB exporter — each cluster can be written as an independent glTF primitive without computing offsets into a shared buffer.
 
 ---
 
 ## Algorithm
 
-### 1. Spatial Grid Binning
+### 1. Partition by Entity
 
-Clustering uses a uniform 3D grid over the map's world-space AABB:
+For each material batch, triangles are partitioned into two groups using `triangleEntityIndices`:
 
-1. Compute the global AABB of all geometry.
-2. Subdivide into a grid with cell size of **16 world units** per axis.
-3. Assign each triangle to the grid cell containing its centroid (average of its three vertex positions).
-4. Each non-empty (materialID, cellCoord) pair becomes a candidate cluster.
+- **Worldspawn triangles** (entityIndex === 0) → spatial grid clustering (below)
+- **Entity triangles** (entityIndex ≥ 1) → one cluster per entity per batch
 
-### 2. Cluster Size Limits
+### 2. Worldspawn: Brush-Intact Spatial Grid Clustering
 
-If a candidate cluster exceeds **512 triangles**, split it by recursive bisection along the longest axis of its AABB (sort triangles by centroid along that axis, split at the median). Repeat until all clusters contain ≤ 512 triangles.
+1. Group worldspawn triangles by `brushIndex` using `triangleBrushIndices`, forming **brush groups**. Each brush group tracks its triangle indices and centroid (average of all triangle centroids in the group).
+2. Assign each brush group to a grid cell based on the brush group centroid. Cell size defaults to **16 world units**.
+3. Each non-empty cell becomes a candidate cluster containing all brush groups assigned to it.
 
-Clusters with fewer than **24 triangles** are merged into the nearest neighboring cluster of the same material (nearest by AABB centroid distance), provided the merged result does not exceed 512 triangles.
+### 3. Cluster Size Limits (Worldspawn Only)
 
-### 3. Index Reordering
+If a candidate cluster exceeds **512 triangles**, split it by recursive bisection of brush groups along the longest axis of its AABB (sort brush groups by centroid, split at the median). If a single brush group alone exceeds 512 triangles, it is kept intact and a diagnostic warning is emitted.
 
-Within each cluster, triangle indices are reordered to maximize vertex cache utilization using the **Forsyth algorithm** (linear-speed vertex cache optimization). This improves post-transform vertex cache hit rates during rendering.
+Clusters with fewer than **24 triangles** are merged into the nearest neighboring **worldspawn** cluster of the same material (nearest by centroid distance), provided the merged result does not exceed 512 triangles.
 
-> **Implementation note:** Forsyth vertex cache optimization **is implemented** in the current version. Triangle indices within each cluster are reordered using the Forsyth algorithm with a 32-entry simulated vertex cache.
+Min-size merging is **not** applied to entity clusters.
 
-> **Implementation note — configurable constants:** The grid cell size (16), max cluster size (512), and min cluster size (24) are defaults in the implementation and can be overridden via `ClusterOptions` passed to `clusterGeometry()`. The compiler forwards `CompileOptions.gridCellSize`, `maxClusterSize`, and `minClusterSize` to the clustering step.
+### 4. Entity Clusters
+
+All triangles with the same non-zero entityIndex within a batch form a single cluster. No spatial subdivision or size merging is performed.
+
+### 5. Index Reordering
+
+Within each cluster, triangle indices are reordered using the **Forsyth algorithm** (linear-speed vertex cache optimization with a 32-entry simulated vertex cache).
+
+> **Implementation note — configurable constants:** The grid cell size (16), max cluster size (512), and min cluster size (24) are defaults and can be overridden via `ClusterOptions` passed to `clusterGeometry()`.
 
 ---
 
@@ -60,17 +71,20 @@ Within each cluster, triangle indices are reordered to maximize vertex cache uti
 
 ### Unit Tests
 
-1. **Single-cell cluster:** Provide a `MaterialBatch` whose triangles all fall within one 16-unit grid cell. Assert exactly 1 cluster is emitted containing all triangles.
-2. **Multi-cell splitting:** Provide triangles spanning 3 distinct grid cells with the same material. Assert 3 clusters are emitted, one per cell.
-3. **Max size enforcement:** Fill a single grid cell with 600 triangles (above the 512 limit). Assert the cell is recursively bisected into 2 clusters, each ≤ 512 triangles.
-4. **Min size merging:** Create clusters below 24 triangles. Assert they are merged into the nearest neighbor, resulting in fewer clusters, each ≥ 24 triangles (or a single cluster if total ≤ 512).
-5. **AABB correctness:** For each emitted cluster, compute the AABB from vertex positions. Assert it matches `cluster.bounds` within ε.
-6. **Index range validity:** For each cluster, assert all indices in `cluster.indices` are within range [0, `cluster.vertices.length − 1`].
-7. **Material preservation:** Assert every cluster's `materialID` matches the source `MaterialBatch.materialID` it was derived from.
+1. **Single-cell cluster:** Provide a `MaterialBatch` whose worldspawn triangles all fall within one 16-unit grid cell. Assert exactly 1 cluster.
+2. **Multi-cell splitting:** Provide worldspawn triangles spanning 3 distinct grid cells. Assert 3 clusters.
+3. **Max size enforcement:** Fill a single grid cell with >512 worldspawn triangles from multiple brushes. Assert bisection into ≤ 512-triangle clusters.
+4. **Min size merging:** Create worldspawn clusters below 24 triangles. Assert they are merged into the nearest neighbor.
+5. **AABB correctness:** For each cluster, assert computed AABB matches `cluster.bounds` within ε.
+6. **Index range validity:** For each cluster, assert all indices are within `[0, cluster.vertices.length − 1]`.
+7. **Material preservation:** Assert every cluster's `materialID` matches its source batch.
+8. **Entity triangles → one cluster per entity:** Provide a batch with triangles from entity 1 and entity 2. Assert exactly 2 entity clusters, one per entity.
+9. **Mixed batch:** A batch with both worldspawn and entity triangles. Assert worldspawn is spatially clustered and entity triangles produce separate clusters.
+10. **Brush integrity:** No brush's triangles appear in more than one cluster.
 
 ### Integration Smoke Test
 
-Run Steps 1–6 on `tests/fixtures/large-map.map` (50+ brushes). Assert: (a) every cluster has between 8 and 512 triangles (inclusive), (b) the sum of all cluster triangle counts across all clusters equals the total triangle count from Step 5, and (c) cluster AABBs do not extend beyond the global map AABB.
+Run Steps 1–6 on `tests/fixtures/large-map.map` (50+ brushes). Assert: (a) every worldspawn cluster has between 8 and 512 triangles, (b) the sum of all cluster triangle counts equals the total from Step 5, and (c) cluster AABBs do not extend beyond the global map AABB.
 
 ---
 
@@ -80,62 +94,34 @@ Run Steps 1–6 on `tests/fixtures/large-map.map` (50+ brushes). Assert: (a) eve
 
 ```typescript
 // pipeline/06-clustering.ts
-export function clusterGeometry(batches: MaterialBatch[]): Cluster[]
+export function clusterGeometry(
+    batches: MaterialBatch[],
+    options?: Partial<ClusterOptions>,
+    diagnostics?: Diagnostics
+): Cluster[]
 ```
 
-### Algorithm
+### Algorithm (pseudocode)
 
-```typescript
-function clusterGeometry(batches: MaterialBatch[]): Cluster[] {
-    const allClusters: Cluster[] = [];
-
-    for (const batch of batches) {
-        // 1. Compute global AABB of this batch
-        const globalAABB = computeAABB(batch.vertices);
-
-        // 2. Assign each triangle to a grid cell
-        const cellMap = new Map<string, number[]>(); // cellKey → triangle indices
-        for (let tri = 0; tri < batch.indices.length / 3; tri++) {
-            const centroid = triangleCentroid(batch, tri);
-            const cellKey = getCellKey(centroid, GRID_CELL_SIZE);
-            let list = cellMap.get(cellKey);
-            if (!list) { list = []; cellMap.set(cellKey, list); }
-            list.push(tri);
-        }
-
-        // 3. Build candidate clusters per cell
-        for (const [, triangles] of cellMap) {
-            const candidates = enforceMaxSize(triangles, batch, MAX_CLUSTER_SIZE);
-            allClusters.push(...candidates.map(tris =>
-                buildCluster(tris, batch)
-            ));
-        }
-    }
-
-    // 4. Merge undersized clusters
-    return mergeUndersized(allClusters, MIN_CLUSTER_SIZE, MAX_CLUSTER_SIZE);
-}
 ```
+for each batch:
+    partition triangles into worldspawn vs entity groups by triangleEntityIndices
 
-### Grid Cell Key
+    // Worldspawn: brush-intact spatial clustering
+    brushGroups = groupTrianglesByBrush(worldspawnTriangles, triangleBrushIndices)
+    cellMap = assign brushGroups to grid cells by centroid
+    for each cell:
+        candidate = all brush groups in cell
+        if triangle count > MAX_CLUSTER_SIZE:
+            split by recursive bisection of brush groups (not triangles)
+        emit clusters
 
-```typescript
-function getCellKey(centroid: Vec3, cellSize: number): string {
-    const cx = Math.floor(centroid.x / cellSize);
-    const cy = Math.floor(centroid.y / cellSize);
-    const cz = Math.floor(centroid.z / cellSize);
-    return `${cx},${cy},${cz}`;
-}
+    // Entities: one cluster per entity
+    for each unique entityIndex ≥ 1:
+        emit one cluster with all triangles of that entity
+
+    merge undersized worldspawn clusters into nearest same-material neighbor
 ```
-
-### Max Size Enforcement (Recursive Bisection)
-
-If a candidate cluster exceeds `MAX_CLUSTER_SIZE`:
-1. Compute the cluster AABB.
-2. Find the longest axis.
-3. Sort triangle indices by centroid along that axis.
-4. Split at the median into two halves.
-5. Recurse on each half until all clusters ≤ `MAX_CLUSTER_SIZE`.
 
 ### Min Size Merging
 

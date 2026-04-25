@@ -2,7 +2,7 @@
 
 Checklist for building the Brush/CSG Map Compiler (`map2gltf`).
 
-**All 101 tasks complete.**
+**All 125 tasks complete.**
 
 ---
 
@@ -25,4 +25,5 @@ Checklist for building the Brush/CSG Map Compiler (`map2gltf`).
 | 12 | Web Application | 12 | ✅ |
 | 13 | Polish & CI | 9 | ✅ |
 | 14 | Web Visualization & Inspection | 12 | ✅ |
-| **Total** | | **101** | |
+| 15 | Entity-Aware Brush-Intact Clustering | 24 | ✅ |
+| **Total** | | **125** | |

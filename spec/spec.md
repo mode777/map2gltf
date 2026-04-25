@@ -319,14 +319,17 @@ export async function compile(mapSource: string, options: CompileOptions): Promi
     const worldEntity = entities[0];
     let brushIdx = 0;
     const worldPolys  = worldEntity
-        ? worldEntity.brushes.flatMap(b => brushToPolygons(b, brushIdx++))
+        ? worldEntity.brushes.flatMap(b => brushToPolygons(b, brushIdx++, 0))
         : [];
     const clipped     = worldCSG(worldPolys);
 
     // Non-world entities (func_wall, func_door, …): compiled per-entity, no inter-entity CSG
-    const entityPolys = entities.slice(1).flatMap(e =>
-        e.brushes.flatMap(b => brushToPolygons(b, brushIdx++))
-    );
+    let entityIdx = 1;
+    const entityPolys = entities.slice(1).flatMap(e => {
+        const polys = e.brushes.flatMap(b => brushToPolygons(b, brushIdx++, entityIdx));
+        entityIdx++;
+        return polys;
+    });
 
     const allPolygons = [...clipped, ...entityPolys];
 

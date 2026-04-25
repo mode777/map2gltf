@@ -116,6 +116,7 @@ describe('02-brush-to-polygons', () => {
             expect(poly.face.textureName).toBeDefined();
             expect(vec3.length(poly.face.normal)).toBeCloseTo(1, 4);
             expect(poly.brushIndex).toBe(0);
+            expect(poly.entityIndex).toBe(0);
         }
     });
 
@@ -129,5 +130,22 @@ describe('02-brush-to-polygons', () => {
         const totalArea = polys.reduce((sum, p) => sum + polygonArea(p.vertices), 0);
         // 2*(128*128) + 4*(128*32) = 32768 + 16384 = 49152
         expect(totalArea).toBeCloseTo(49152, -1);
+    });
+
+    it('should propagate entityIndex parameter', () => {
+        const brush = makeBoxBrush(0, 0, 0, 64, 64, 64);
+        const polys = brushToPolygons(brush, 3, 2);
+        for (const poly of polys) {
+            expect(poly.entityIndex).toBe(2);
+            expect(poly.brushIndex).toBe(3);
+        }
+    });
+
+    it('should default entityIndex to 0 (worldspawn)', () => {
+        const brush = makeBoxBrush(0, 0, 0, 64, 64, 64);
+        const polys = brushToPolygons(brush, 0);
+        for (const poly of polys) {
+            expect(poly.entityIndex).toBe(0);
+        }
     });
 });

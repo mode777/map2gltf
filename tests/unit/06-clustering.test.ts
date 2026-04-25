@@ -10,20 +10,48 @@ function makeVertex(x: number, y: number, z: number): Vertex {
     };
 }
 
-function makeBatch(materialID: number, triCount: number, offset = 0): MaterialBatch {
+/**
+ * Create a batch with triangles, each assigned to a specific entity/brush.
+ * `triDefs` is an array of { x, y, entityIndex, brushIndex } per triangle.
+ */
+function makeBatchWithMeta(
+    materialID: number,
+    triDefs: Array<{ x: number; y: number; entityIndex: number; brushIndex: number }>,
+): MaterialBatch {
     const vertices: Vertex[] = [];
     const indices: number[] = [];
-    for (let i = 0; i < triCount; i++) {
-        const x = offset + (i % 10) * 4;
-        const y = Math.floor(i / 10) * 4;
+    const triangleEntityIndices: number[] = [];
+    const triangleBrushIndices: number[] = [];
+    for (const def of triDefs) {
         const base = vertices.length;
-        vertices.push(makeVertex(x, y, 0), makeVertex(x + 2, y, 0), makeVertex(x + 1, y + 2, 0));
+        vertices.push(
+            makeVertex(def.x, def.y, 0),
+            makeVertex(def.x + 2, def.y, 0),
+            makeVertex(def.x + 1, def.y + 2, 0),
+        );
         indices.push(base, base + 1, base + 2);
+        triangleEntityIndices.push(def.entityIndex);
+        triangleBrushIndices.push(def.brushIndex);
     }
-    return { materialID, textureName: `tex_${materialID}`, vertices, indices };
+    return { materialID, textureName: `tex_${materialID}`, vertices, indices, triangleEntityIndices, triangleBrushIndices };
+}
+
+function makeBatch(materialID: number, triCount: number, offset = 0): MaterialBatch {
+    const defs = [];
+    for (let i = 0; i < triCount; i++) {
+        defs.push({
+            x: offset + (i % 10) * 4,
+            y: Math.floor(i / 10) * 4,
+            entityIndex: 0,
+            brushIndex: 0,
+        });
+    }
+    return makeBatchWithMeta(materialID, defs);
 }
 
 describe('06-clustering', () => {
+    // --- Existing tests (updated for new batch format) ---
+
     it('should create a single cluster for small geometry in one cell', () => {
         const batch = makeBatch(0, 10, 0);
         const clusters = clusterGeometry([batch]);
@@ -33,24 +61,22 @@ describe('06-clustering', () => {
     });
 
     it('should split across multiple cells', () => {
-        // Create triangles spread over multiple 16-unit cells
-        const vertices: Vertex[] = [];
-        const indices: number[] = [];
+        const defs = [];
         for (let i = 0; i < 30; i++) {
-            const x = i * 20; // spread across different cells
-            const base = vertices.length;
-            vertices.push(makeVertex(x, 0, 0), makeVertex(x + 2, 0, 0), makeVertex(x + 1, 2, 0));
-            indices.push(base, base + 1, base + 2);
+            defs.push({ x: i * 20, y: 0, entityIndex: 0, brushIndex: i });
         }
-        const batch: MaterialBatch = { materialID: 0, textureName: 'tex', vertices, indices };
-        // Use minClusterSize=1 to isolate spatial splitting from merge behavior
+        const batch = makeBatchWithMeta(0, defs);
         const clusters = clusterGeometry([batch], { minClusterSize: 1 });
         expect(clusters.length).toBeGreaterThan(1);
     });
 
     it('should enforce max cluster size', () => {
-        // 600 triangles in a small area → should split
-        const batch = makeBatch(0, 600, 0);
+        // 600 triangles spread across many brushes
+        const defs = [];
+        for (let i = 0; i < 600; i++) {
+            defs.push({ x: (i % 10) * 4, y: Math.floor(i / 10) * 4, entityIndex: 0, brushIndex: i });
+        }
+        const batch = makeBatchWithMeta(0, defs);
         const clusters = clusterGeometry([batch]);
         for (const c of clusters) {
             expect(c.indices.length / 3).toBeLessThanOrEqual(512);
@@ -58,18 +84,12 @@ describe('06-clustering', () => {
     });
 
     it('should merge undersized clusters', () => {
-        // Create tiny batches that should be merged
-        const vertices: Vertex[] = [];
-        const indices: number[] = [];
+        const defs = [];
         for (let i = 0; i < 6; i++) {
-            const x = i * 20; // Each in separate cell, below min size
-            const base = vertices.length;
-            vertices.push(makeVertex(x, 0, 0), makeVertex(x + 2, 0, 0), makeVertex(x + 1, 2, 0));
-            indices.push(base, base + 1, base + 2);
+            defs.push({ x: i * 20, y: 0, entityIndex: 0, brushIndex: i });
         }
-        const batch: MaterialBatch = { materialID: 0, textureName: 'tex', vertices, indices };
+        const batch = makeBatchWithMeta(0, defs);
         const clusters = clusterGeometry([batch]);
-        // Should merge undersized clusters
         const totalTris = clusters.reduce((s, c) => s + c.indices.length / 3, 0);
         expect(totalTris).toBe(6);
     });
@@ -106,42 +126,204 @@ describe('06-clustering', () => {
         }
     });
 
-    it('should merge aggressively with default minClusterSize=24', () => {
-        // 130 triangles in a single material, spread across many 16-unit cells
-        const vertices: Vertex[] = [];
-        const indices: number[] = [];
-        for (let i = 0; i < 130; i++) {
-            const x = (i % 13) * 18; // spread across ~13 cells along X
-            const y = Math.floor(i / 13) * 18; // ~10 rows along Y
-            const base = vertices.length;
-            vertices.push(makeVertex(x, y, 0), makeVertex(x + 2, y, 0), makeVertex(x + 1, y + 2, 0));
-            indices.push(base, base + 1, base + 2);
-        }
-        const batch: MaterialBatch = { materialID: 0, textureName: 'tex', vertices, indices };
-        const clusters = clusterGeometry([batch]);
-        // With default minClusterSize=24, expect far fewer than 23 clusters
-        expect(clusters.length).toBeLessThanOrEqual(10);
-        // All triangles preserved
-        const totalTris = clusters.reduce((s, c) => s + c.indices.length / 3, 0);
-        expect(totalTris).toBe(130);
-        // Each cluster should have at least minClusterSize tris (or be the only one left)
-        for (const c of clusters) {
-            if (clusters.length > 1) {
-                expect(c.indices.length / 3).toBeGreaterThanOrEqual(1);
-            }
-        }
-    });
-
     it('should respect custom options override', () => {
         const batch = makeBatch(0, 50, 0);
         const defaultClusters = clusterGeometry([batch]);
         const aggressiveClusters = clusterGeometry([batch], { minClusterSize: 50 });
-        // Aggressive merging should produce fewer or equal clusters
         expect(aggressiveClusters.length).toBeLessThanOrEqual(defaultClusters.length);
-        // Total tris preserved
         const totalDefault = defaultClusters.reduce((s, c) => s + c.indices.length / 3, 0);
         const totalAggressive = aggressiveClusters.reduce((s, c) => s + c.indices.length / 3, 0);
         expect(totalDefault).toBe(50);
         expect(totalAggressive).toBe(50);
+    });
+
+    // --- New tests: Entity clustering ---
+
+    it('should produce one cluster per entity per material (single entity)', () => {
+        const defs = [];
+        for (let i = 0; i < 100; i++) {
+            defs.push({ x: i * 20, y: 0, entityIndex: 1, brushIndex: 10 });
+        }
+        const batch = makeBatchWithMeta(0, defs);
+        const clusters = clusterGeometry([batch]);
+        expect(clusters).toHaveLength(1);
+        expect(clusters[0]!.indices.length / 3).toBe(100);
+    });
+
+    it('should produce separate clusters for multiple entities', () => {
+        const defs = [
+            ...Array.from({ length: 10 }, (_, i) => ({ x: i * 4, y: 0, entityIndex: 1, brushIndex: 1 })),
+            ...Array.from({ length: 10 }, (_, i) => ({ x: i * 4, y: 20, entityIndex: 2, brushIndex: 2 })),
+            ...Array.from({ length: 10 }, (_, i) => ({ x: i * 4, y: 40, entityIndex: 3, brushIndex: 3 })),
+        ];
+        const batch = makeBatchWithMeta(0, defs);
+        const clusters = clusterGeometry([batch]);
+        expect(clusters).toHaveLength(3);
+    });
+
+    it('should not split entity clusters even above maxClusterSize', () => {
+        const defs = [];
+        for (let i = 0; i < 800; i++) {
+            defs.push({ x: (i % 20) * 4, y: Math.floor(i / 20) * 4, entityIndex: 1, brushIndex: 1 });
+        }
+        const batch = makeBatchWithMeta(0, defs);
+        const clusters = clusterGeometry([batch], { maxClusterSize: 512 });
+        expect(clusters).toHaveLength(1);
+        expect(clusters[0]!.indices.length / 3).toBe(800);
+    });
+
+    // --- New tests: Brush integrity ---
+
+    it('should keep brush triangles together in same cell (worldspawn)', () => {
+        // Two brushes, all within one grid cell
+        const defs = [
+            ...Array.from({ length: 5 }, (_, i) => ({ x: i * 2, y: 0, entityIndex: 0, brushIndex: 0 })),
+            ...Array.from({ length: 5 }, (_, i) => ({ x: i * 2, y: 4, entityIndex: 0, brushIndex: 1 })),
+        ];
+        const batch = makeBatchWithMeta(0, defs);
+        const clusters = clusterGeometry([batch]);
+        // Each cluster should contain only whole brushes
+        for (const c of clusters) {
+            const brushes = new Set(c.triangleIndices.map(ti => batch.triangleBrushIndices[ti]));
+            for (const bi of brushes) {
+                // All triangles of this brush should be in this cluster
+                const allTrisOfBrush = batch.triangleBrushIndices
+                    .map((b, i) => b === bi ? i : -1)
+                    .filter(i => i >= 0);
+                const inThisCluster = c.triangleIndices.filter(ti => batch.triangleBrushIndices[ti] === bi);
+                expect(inThisCluster.length).toBe(allTrisOfBrush.length);
+            }
+        }
+    });
+
+    it('should keep brush triangles together across different cells (worldspawn)', () => {
+        // Two brushes in different grid cells
+        const defs = [
+            ...Array.from({ length: 5 }, (_, i) => ({ x: i * 2, y: 0, entityIndex: 0, brushIndex: 0 })),
+            ...Array.from({ length: 5 }, (_, i) => ({ x: 100 + i * 2, y: 0, entityIndex: 0, brushIndex: 1 })),
+        ];
+        const batch = makeBatchWithMeta(0, defs);
+        const clusters = clusterGeometry([batch], { minClusterSize: 1 });
+        // No brush should appear in more than one cluster
+        const brushClusters = new Map<number, number>();
+        for (let ci = 0; ci < clusters.length; ci++) {
+            for (const ti of clusters[ci]!.triangleIndices) {
+                const bi = batch.triangleBrushIndices[ti]!;
+                if (brushClusters.has(bi)) {
+                    expect(brushClusters.get(bi)).toBe(ci);
+                } else {
+                    brushClusters.set(bi, ci);
+                }
+            }
+        }
+    });
+
+    it('should not tear brushes when splitting oversized cells', () => {
+        // 10 brushes × 60 triangles each = 600 total in one cell → split required at max=512
+        const defs = [];
+        for (let b = 0; b < 10; b++) {
+            for (let t = 0; t < 60; t++) {
+                defs.push({ x: t * 0.1, y: b * 0.1, entityIndex: 0, brushIndex: b });
+            }
+        }
+        const batch = makeBatchWithMeta(0, defs);
+        const clusters = clusterGeometry([batch], { maxClusterSize: 512, minClusterSize: 1 });
+        // No brush should appear in more than one cluster
+        const brushClusters = new Map<number, number>();
+        for (let ci = 0; ci < clusters.length; ci++) {
+            for (const ti of clusters[ci]!.triangleIndices) {
+                const bi = batch.triangleBrushIndices[ti]!;
+                if (brushClusters.has(bi)) {
+                    expect(brushClusters.get(bi)).toBe(ci);
+                } else {
+                    brushClusters.set(bi, ci);
+                }
+            }
+        }
+        const totalTris = clusters.reduce((s, c) => s + c.indices.length / 3, 0);
+        expect(totalTris).toBe(600);
+    });
+
+    it('should keep oversized single brush intact', () => {
+        const defs = [];
+        for (let i = 0; i < 600; i++) {
+            defs.push({ x: (i % 10) * 0.1, y: Math.floor(i / 10) * 0.1, entityIndex: 0, brushIndex: 0 });
+        }
+        const batch = makeBatchWithMeta(0, defs);
+        const clusters = clusterGeometry([batch], { maxClusterSize: 512, minClusterSize: 1 });
+        expect(clusters).toHaveLength(1);
+        expect(clusters[0]!.indices.length / 3).toBe(600);
+    });
+
+    // --- New tests: Mixed worldspawn + entity ---
+
+    it('should separate worldspawn and entity triangles into different clusters', () => {
+        const defs = [
+            ...Array.from({ length: 50 }, (_, i) => ({ x: i * 0.1, y: 0, entityIndex: 0, brushIndex: 0 })),
+            ...Array.from({ length: 30 }, (_, i) => ({ x: i * 0.1, y: 10, entityIndex: 1, brushIndex: 1 })),
+        ];
+        const batch = makeBatchWithMeta(0, defs);
+        const clusters = clusterGeometry([batch]);
+        expect(clusters.length).toBeGreaterThanOrEqual(2);
+
+        // Find entity-1 cluster
+        const entityCluster = clusters.find(c =>
+            c.triangleIndices.some(ti => batch.triangleEntityIndices[ti] === 1),
+        )!;
+        expect(entityCluster).toBeDefined();
+        // All its triangles should be entity 1
+        for (const ti of entityCluster.triangleIndices) {
+            expect(batch.triangleEntityIndices[ti]).toBe(1);
+        }
+        // Entity-1 should have exactly 30 triangles
+        expect(entityCluster.triangleIndices.length).toBe(30);
+
+        const totalTris = clusters.reduce((s, c) => s + c.indices.length / 3, 0);
+        expect(totalTris).toBe(80);
+    });
+
+    it('should merge undersized worldspawn clusters while respecting brush integrity', () => {
+        // 5 brushes with 4 tris each in nearby but different cells
+        const defs = [];
+        for (let b = 0; b < 5; b++) {
+            for (let t = 0; t < 4; t++) {
+                defs.push({ x: b * 20 + t * 2, y: 0, entityIndex: 0, brushIndex: b });
+            }
+        }
+        const batch = makeBatchWithMeta(0, defs);
+        const clusters = clusterGeometry([batch], { minClusterSize: 24 });
+        // Should be merged into fewer clusters
+        expect(clusters.length).toBeLessThan(5);
+        // No brush torn apart
+        const brushClusters = new Map<number, number>();
+        for (let ci = 0; ci < clusters.length; ci++) {
+            for (const ti of clusters[ci]!.triangleIndices) {
+                const bi = batch.triangleBrushIndices[ti]!;
+                if (brushClusters.has(bi)) {
+                    expect(brushClusters.get(bi)).toBe(ci);
+                } else {
+                    brushClusters.set(bi, ci);
+                }
+            }
+        }
+        const totalTris = clusters.reduce((s, c) => s + c.indices.length / 3, 0);
+        expect(totalTris).toBe(20);
+    });
+
+    it('should cluster per-material independently for worldspawn', () => {
+        const batch0 = makeBatchWithMeta(0, [
+            ...Array.from({ length: 10 }, (_, i) => ({ x: i * 2, y: 0, entityIndex: 0, brushIndex: 0 })),
+        ]);
+        const batch1 = makeBatchWithMeta(1, [
+            ...Array.from({ length: 10 }, (_, i) => ({ x: i * 2, y: 0, entityIndex: 0, brushIndex: 0 })),
+        ]);
+        const clusters = clusterGeometry([batch0, batch1]);
+        const mat0 = clusters.filter(c => c.materialID === 0);
+        const mat1 = clusters.filter(c => c.materialID === 1);
+        expect(mat0.length).toBeGreaterThanOrEqual(1);
+        expect(mat1.length).toBeGreaterThanOrEqual(1);
+        // Both materials have all their triangles
+        expect(mat0.reduce((s, c) => s + c.indices.length / 3, 0)).toBe(10);
+        expect(mat1.reduce((s, c) => s + c.indices.length / 3, 0)).toBe(10);
     });
 });

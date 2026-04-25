@@ -9,6 +9,8 @@ export function triangulate(
     const vertices: Vertex[] = [];
     const indices: number[] = [];
     const triangleMaterials: string[] = [];
+    const triangleEntityIndices: number[] = [];
+    const triangleBrushIndices: number[] = [];
 
     const defaultSize: [number, number] = [64, 64];
 
@@ -40,8 +42,10 @@ export function triangulate(
         for (let i = 1; i < poly.vertices.length - 1; i++) {
             indices.push(baseIndex, baseIndex + i, baseIndex + i + 1);
             triangleMaterials.push(face.textureName);
+            triangleEntityIndices.push(poly.entityIndex);
+            triangleBrushIndices.push(poly.brushIndex);
         }
     }
 
-    return { vertices, indices, triangleMaterials };
+    return { vertices, indices, triangleMaterials, triangleEntityIndices, triangleBrushIndices };
 }

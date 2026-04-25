@@ -130,4 +130,19 @@ describe('03-world-csg', () => {
         const result = worldCSG(polys);
         expect(result.length).toBe(10);
     });
+
+    it('should preserve entityIndex through CSG fragmentation', () => {
+        const polysA = makeBoxPolygons(0, 0, 0, 64, 64, 64, 0);
+        const polysB = makeBoxPolygons(32, 0, 0, 96, 64, 64, 1);
+        // All worldspawn polygons have entityIndex 0
+        for (const p of [...polysA, ...polysB]) {
+            expect(p.entityIndex).toBe(0);
+        }
+        const result = worldCSG([...polysA, ...polysB]);
+        for (const poly of result) {
+            expect(poly.entityIndex).toBe(0);
+            expect(typeof poly.brushIndex).toBe('number');
+            expect([0, 1]).toContain(poly.brushIndex);
+        }
+    });
 });

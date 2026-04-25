@@ -79,6 +79,7 @@ interface ConvexPolygon {
     vertices: Vec3[];       // CCW winding, length ≥ 3
     face: ParsedFace;       // originating face (for normal, texture axes, material)
     brushIndex: number;     // index of the source brush (for CSG self-exclusion in Step 3)
+    entityIndex: number;    // 0 = worldspawn, 1+ = non-worldspawn entity index
 }
 ```
 
@@ -110,10 +111,10 @@ Process the wedge brush from `tests/fixtures/wedge.map`. Assert 5 polygons are e
 
 ```typescript
 // pipeline/02-brush-to-polygons.ts
-export function brushToPolygons(brush: ParsedBrush, brushIndex: number): ConvexPolygon[]
+export function brushToPolygons(brush: ParsedBrush, brushIndex: number, entityIndex?: number): ConvexPolygon[]
 ```
 
-The `brushIndex` is assigned by the caller and stored on every emitted `ConvexPolygon` for use by Step 3 (CSG self-exclusion).
+The `brushIndex` is assigned by the caller and stored on every emitted `ConvexPolygon` for use by Step 3 (CSG self-exclusion). The `entityIndex` defaults to 0 (worldspawn) and is propagated to every output polygon for use by Step 6 (clustering).
 
 ### Algorithm (per brush)
 

@@ -58,13 +58,15 @@ v = ( dot(p, face.texAxisV) + face.texOffsetV ) / face.texScaleV / textureHeight
 
 ```typescript
 interface TriangulatedMesh {
-    vertices: Vertex[];          // all vertices across all triangulated polygons
-    indices: number[];           // triangle indices into vertices[] (length is multiple of 3)
-    triangleMaterials: string[]; // texture name per triangle (length = indices.length / 3)
+    vertices: Vertex[];              // all vertices across all triangulated polygons
+    indices: number[];               // triangle indices into vertices[] (length is multiple of 3)
+    triangleMaterials: string[];     // texture name per triangle (length = indices.length / 3)
+    triangleEntityIndices: number[]; // entity index per triangle (0 = worldspawn)
+    triangleBrushIndices: number[];  // global brush index per triangle
 }
 ```
 
-Each group of 3 consecutive indices defines one triangle. `triangleMaterials[i]` is the texture name for the triangle defined by `indices[i*3]`, `indices[i*3+1]`, `indices[i*3+2]`. The total triangle count is `indices.length / 3`.
+Each group of 3 consecutive indices defines one triangle. `triangleMaterials[i]` is the texture name for the triangle defined by `indices[i*3]`, `indices[i*3+1]`, `indices[i*3+2]`. The `triangleEntityIndices` and `triangleBrushIndices` arrays propagate provenance from the source `ConvexPolygon` for use by the clustering step. The total triangle count is `indices.length / 3`.
 
 ---
 
