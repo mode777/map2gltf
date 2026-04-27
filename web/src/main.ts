@@ -32,6 +32,7 @@ treeWithHover.onHover((node) => {
 });
 
 let currentFileName = 'output.map';
+const clusteringCheckbox = document.getElementById('enable-clustering') as HTMLInputElement;
 
 worker.onmessage = async (event: MessageEvent) => {
     const data = event.data as { type: string; glb?: Uint8Array; stats?: CompileStats; message?: string };
@@ -60,7 +61,8 @@ async function handleFile(file: File): Promise<void> {
     highlighter.clear();
     bvhTree.clearSelection();
     const mapSource = await file.text();
-    worker.postMessage({ mapSource });
+    const skipClustering = !clusteringCheckbox.checked;
+    worker.postMessage({ mapSource, options: { skipClustering } });
 }
 
 initDropZone({

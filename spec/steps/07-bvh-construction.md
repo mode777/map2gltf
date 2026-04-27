@@ -8,6 +8,8 @@
 
 Build a bounding volume hierarchy over clusters to provide a spatial acceleration structure for frustum culling.
 
+> **Note:** When `skipClustering` is enabled, the cluster count equals the material count. For typical maps with ≤ 4 materials this falls at or below the BVH leaf threshold, producing a single leaf node wrapping all clusters.
+
 **Input:** `Cluster[]` (from [Step 6](06-clustering.md))
 **Output:** `BVHNode[]` (flat array, depth-first order)
 

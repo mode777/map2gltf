@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { compile, compileWithDiagnostics } from '../../src/compiler.js';
+import { compile, compileWithDiagnostics, compileDetailed } from '../../src/compiler.js';
 import { NodeIO } from '@gltf-transform/core';
 
 const fixtures = resolve(import.meta.dirname, '../fixtures');
@@ -86,5 +86,35 @@ describe('integration: compile()', () => {
             return extras && typeof extras === 'object' && 'aabb' in extras;
         });
         expect(withAabb.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should exclude CLIP-textured geometry from output', async () => {
+        const source = readFixture('clip-brush.map');
+        const glb = await compile(source);
+        const io = new NodeIO();
+        const doc = await io.readBinary(glb);
+        const materials = doc.getRoot().listMaterials();
+        const materialNames = materials.map(m => m.getName());
+        expect(materialNames).not.toContain('clip');
+        // Should still have the brick material
+        expect(materialNames.some(n => n === 'brick')).toBe(true);
+    });
+
+    it('should compile with skipClustering producing one cluster per material', async () => {
+        const source = readFixture('two-rooms.map');
+        const { stats } = await compileDetailed(source, { skipClustering: true });
+        // One cluster per material
+        expect(stats.clusterCount).toBe(stats.materialCount);
+        // Single BVH node when clustering is skipped
+        expect(stats.bvhNodeCount).toBe(1);
+        expect(stats.bvhLeafCount).toBe(1);
+        expect(stats.bvhDepth).toBe(1);
+    });
+
+    it('skipClustering should not change triangle count', async () => {
+        const source = readFixture('two-rooms.map');
+        const normal = await compileDetailed(source);
+        const skipped = await compileDetailed(source, { skipClustering: true });
+        expect(skipped.stats.triangleCount).toBe(normal.stats.triangleCount);
     });
 });

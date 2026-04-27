@@ -326,4 +326,54 @@ describe('06-clustering', () => {
         expect(mat0.reduce((s, c) => s + c.indices.length / 3, 0)).toBe(10);
         expect(mat1.reduce((s, c) => s + c.indices.length / 3, 0)).toBe(10);
     });
+
+    // --- skipClustering tests ---
+
+    it('skipClustering should produce one cluster per material batch', () => {
+        const batch0 = makeBatch(0, 20, 0);
+        const batch1 = makeBatch(1, 15, 100);
+        const batch2 = makeBatch(2, 10, 200);
+        const clusters = clusterGeometry([batch0, batch1, batch2], { skipClustering: true });
+        expect(clusters).toHaveLength(3);
+        expect(clusters[0]!.materialID).toBe(0);
+        expect(clusters[1]!.materialID).toBe(1);
+        expect(clusters[2]!.materialID).toBe(2);
+    });
+
+    it('skipClustering should preserve all triangles', () => {
+        const batch = makeBatch(0, 100, 0);
+        const clusters = clusterGeometry([batch], { skipClustering: true });
+        expect(clusters).toHaveLength(1);
+        expect(clusters[0]!.indices.length / 3).toBe(100);
+    });
+
+    it('skipClustering should still apply Forsyth reordering (valid permutation)', () => {
+        const batch = makeBatch(0, 30, 0);
+        const clusters = clusterGeometry([batch], { skipClustering: true });
+        const cluster = clusters[0]!;
+        // All indices should be valid
+        for (const idx of cluster.indices) {
+            expect(idx).toBeGreaterThanOrEqual(0);
+            expect(idx).toBeLessThan(cluster.vertices.length);
+        }
+        // Triangle count preserved
+        expect(cluster.indices.length / 3).toBe(30);
+    });
+
+    it('skipClustering should ignore grid/splitting/merging options', () => {
+        // Spread geometry across many grid cells — normally produces multiple clusters
+        const defs = [];
+        for (let i = 0; i < 50; i++) {
+            defs.push({ x: i * 100, y: 0, entityIndex: 0, brushIndex: i });
+        }
+        const batch = makeBatchWithMeta(0, defs);
+        const clusters = clusterGeometry([batch], {
+            skipClustering: true,
+            gridCellSize: 16,
+            maxClusterSize: 10,
+            minClusterSize: 24,
+        });
+        expect(clusters).toHaveLength(1);
+        expect(clusters[0]!.indices.length / 3).toBe(50);
+    });
 });

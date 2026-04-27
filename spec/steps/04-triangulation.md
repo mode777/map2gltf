@@ -8,6 +8,8 @@
 
 Convert all surviving convex polygons into triangles and compute per-vertex attributes (position, normal, texture UVs).
 
+> **Precondition:** Polygons with `textureName === 'clip'` are excluded by the compiler before this step. Only visible geometry reaches triangulation.
+
 **Input:** `ConvexPolygon[]` (from [Step 3](03-world-csg.md)), `textureSizes: Map<string, [number, number]>` (from `CompileOptions`)
 **Output:** `TriangulatedMesh` (vertices, triangle indices, per-triangle material names)
 

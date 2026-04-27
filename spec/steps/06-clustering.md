@@ -11,6 +11,10 @@ Group triangles within each material batch into spatially coherent clusters that
 - **Worldspawn** (entity index 0) brushes are spatially clustered using a uniform 3D grid, but a single brush is never split across clusters.
 - **Non-worldspawn entities** (entity index ≥ 1) produce one cluster per entity per material batch — no spatial subdivision.
 
+### Skip-Clustering Mode
+
+When `skipClustering` is `true` in `ClusterOptions`, spatial clustering is bypassed entirely. Each `MaterialBatch` produces exactly **one `Cluster`** containing all its triangles. No grid assignment, splitting, or merging is performed. Forsyth index reordering is still applied. This results in one cluster per material, which causes the BVH (Step 7) to degenerate to a single leaf node for typical material counts.
+
 **Input:** `MaterialBatch[]` (from [Step 5](05-material-merge.md)), each batch carrying `triangleEntityIndices` and `triangleBrushIndices` metadata arrays.
 **Output:** `Cluster[]`
 

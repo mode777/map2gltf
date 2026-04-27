@@ -116,6 +116,15 @@ interface AABB {
 | Min cluster size       | 8 triangles        |
 | BVH leaf threshold     | 4 clusters         |
 | SAH split candidates   | 12 per axis        |
+| Skip clustering        | `false`            |
+
+---
+
+## Special Texture Names
+
+| Texture | Behaviour |
+|---------|-----------|
+| `clip`  | Brush participates in CSG but no visible geometry is generated. Polygons with this texture are filtered out after CSG (Step 3) and before triangulation (Step 4). |
 
 ---
 

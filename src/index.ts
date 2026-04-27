@@ -13,6 +13,7 @@ Options:
   --max-cluster-size         Max triangles per cluster (default: 512)
   --min-cluster-size         Min triangles per cluster (default: 8)
   --bvh-leaf-threshold       BVH leaf cluster threshold (default: 4)
+  --no-clustering            Skip spatial clustering (one cluster per material)
   -v, --verbose              Print diagnostics to stderr
   -h, --help                 Show help`);
 }
@@ -28,6 +29,7 @@ async function main(): Promise<void> {
     let inputFile = '';
     let outputFile = '';
     let verbose = false;
+    let skipClustering = false;
 
     for (let i = 0; i < args.length; i++) {
         const arg = args[i]!;
@@ -35,6 +37,8 @@ async function main(): Promise<void> {
             outputFile = args[++i] ?? '';
         } else if (arg === '-v' || arg === '--verbose') {
             verbose = true;
+        } else if (arg === '--no-clustering') {
+            skipClustering = true;
         } else if (!arg.startsWith('-')) {
             inputFile = arg;
         }
@@ -54,7 +58,7 @@ async function main(): Promise<void> {
         const mapSource = readFileSync(inputPath, 'utf-8');
 
         if (verbose) {
-            const { glb, diagnostics } = await compileWithDiagnostics(mapSource);
+            const { glb, diagnostics } = await compileWithDiagnostics(mapSource, { skipClustering });
             for (const w of diagnostics.warnings) {
                 console.error(`[WARN] [${w.step}] ${w.message}${w.location ? ` (${w.location})` : ''}`);
             }
@@ -63,7 +67,7 @@ async function main(): Promise<void> {
             }
             writeFileSync(outputFile, glb);
         } else {
-            const glb = await compile(mapSource);
+            const glb = await compile(mapSource, { skipClustering });
             writeFileSync(outputFile, glb);
         }
 

@@ -179,6 +179,13 @@ A single worker instance is created on page load and reused for all compilations
             <input type="file" id="file-input" accept=".map" />
         </div>
 
+        <div class="options">
+            <label>
+                <input type="checkbox" id="enable-clustering" checked />
+                Enable spatial clustering
+            </label>
+        </div>
+
         <div id="status" class="status" hidden>
             <div id="progress" class="progress-bar"></div>
             <p id="status-text"></p>
@@ -235,6 +242,15 @@ Within the **Result** state, the BVH tree and metadata panels are toggled indepe
 | Result + Both | Visible | Visible | Active on selection |
 
 Panel visibility is toggled independently. The panels are always hidden when leaving the Result state.
+
+### Compile Options
+
+The **Enable spatial clustering** checkbox (`#enable-clustering`) controls the `skipClustering` compiler option:
+
+- **Checked (default):** `skipClustering: false` — full spatial clustering is applied.
+- **Unchecked:** `skipClustering: true` — each material batch becomes a single cluster.
+
+The checkbox is **disabled** during compilation (`showCompiling`) and **re-enabled** on result or error (`showResult`/`showError`). The checkbox state is read when `handleFile()` runs, immediately before posting the message to the Web Worker.
 
 ### ui.ts
 

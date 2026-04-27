@@ -8,6 +8,7 @@ const bvhTreePanel = document.getElementById('bvh-tree-panel')!;
 const metadataPanel = document.getElementById('metadata-panel')!;
 const toggleBvhBtn = document.getElementById('toggle-bvh-tree') as HTMLButtonElement;
 const toggleMetaBtn = document.getElementById('toggle-metadata') as HTMLButtonElement;
+const clusteringCheckbox = document.getElementById('enable-clustering') as HTMLInputElement | null;
 
 let currentObjectUrl: string | null = null;
 
@@ -30,6 +31,7 @@ export function showCompiling(fileName: string): void {
     resultEl.hidden = true;
     dropZone.style.pointerEvents = 'none';
     dropZone.style.opacity = '0.5';
+    if (clusteringCheckbox) clusteringCheckbox.disabled = true;
 }
 
 export function showResult(glb: Uint8Array, fileName: string): void {
@@ -46,6 +48,7 @@ export function showResult(glb: Uint8Array, fileName: string): void {
     resultEl.hidden = false;
     dropZone.style.pointerEvents = '';
     dropZone.style.opacity = '';
+    if (clusteringCheckbox) clusteringCheckbox.disabled = false;
 }
 
 export function showError(message: string): void {
@@ -55,6 +58,7 @@ export function showError(message: string): void {
     resultEl.hidden = true;
     dropZone.style.pointerEvents = '';
     dropZone.style.opacity = '';
+    if (clusteringCheckbox) clusteringCheckbox.disabled = false;
 }
 
 export function resetUI(): void {

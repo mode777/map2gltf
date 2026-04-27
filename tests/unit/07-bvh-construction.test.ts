@@ -130,6 +130,44 @@ describe('07-bvh-construction', () => {
             }
         }
     });
+
+    it('should produce a single leaf or minimal tree for few clusters (skip-clustering scenario)', () => {
+        // 2 clusters simulating 2-material skip-clustering
+        const clusters = [
+            makeCluster(0, 0, 0, 0, 10, 10, 10),
+            makeCluster(1, 20, 0, 0, 30, 10, 10),
+        ];
+        const bvh = buildBVH(clusters);
+        // With 2 clusters and leaf threshold 4, should be a single leaf
+        expect(bvh).toHaveLength(1);
+        expect(bvh[0]!.left).toBe(-1);
+        expect(bvh[0]!.clusterCount).toBe(2);
+    });
+
+    it('should handle exactly bvhLeafThreshold clusters as a single leaf', () => {
+        // 4 clusters = exact leaf threshold
+        const clusters = [
+            makeCluster(0, 0, 0, 0, 10, 10, 10),
+            makeCluster(1, 20, 0, 0, 30, 10, 10),
+            makeCluster(2, 40, 0, 0, 50, 10, 10),
+            makeCluster(3, 60, 0, 0, 70, 10, 10),
+        ];
+        const bvh = buildBVH(clusters);
+        expect(bvh).toHaveLength(1);
+        expect(bvh[0]!.left).toBe(-1);
+        expect(bvh[0]!.clusterCount).toBe(4);
+    });
+
+    it('skipClustering should force a single leaf even with many clusters', () => {
+        const clusters: Cluster[] = [];
+        for (let i = 0; i < 10; i++) {
+            clusters.push(makeCluster(i, i * 10, 0, 0, i * 10 + 5, 5, 5));
+        }
+        const bvh = buildBVH(clusters, { skipClustering: true });
+        expect(bvh).toHaveLength(1);
+        expect(bvh[0]!.left).toBe(-1);
+        expect(bvh[0]!.clusterCount).toBe(10);
+    });
 });
 
 // Integration smoke test: BVH vs brute-force frustum test

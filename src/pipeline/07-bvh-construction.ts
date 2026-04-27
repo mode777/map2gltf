@@ -69,7 +69,11 @@ function findBestSplit(
     return { axis: bestAxis, splitPos: bestPos, cost: bestCost };
 }
 
-export function buildBVH(clusters: Cluster[]): BVHNode[] {
+export interface BVHOptions {
+    skipClustering?: boolean;
+}
+
+export function buildBVH(clusters: Cluster[], options?: BVHOptions): BVHNode[] {
     if (clusters.length === 0) {
         return [{
             bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
@@ -77,6 +81,19 @@ export function buildBVH(clusters: Cluster[]): BVHNode[] {
             right: -1,
             firstCluster: 0,
             clusterCount: 0,
+        }];
+    }
+
+    // When clustering is skipped, produce a single leaf wrapping all clusters
+    if (options?.skipClustering) {
+        const allIndices = [...Array(clusters.length).keys()];
+        const bounds = mergeClusterAABBs(clusters, allIndices);
+        return [{
+            bounds,
+            left: -1,
+            right: -1,
+            firstCluster: 0,
+            clusterCount: clusters.length,
         }];
     }
 

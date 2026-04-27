@@ -25,6 +25,7 @@ function resolveOptions(partial?: Partial<CompileOptions>): CompileOptions {
         bvhLeafThreshold: partial.bvhLeafThreshold ?? DEFAULT_OPTIONS.bvhLeafThreshold,
         sahCandidates: partial.sahCandidates ?? DEFAULT_OPTIONS.sahCandidates,
         textureSizes: partial.textureSizes ?? new Map(DEFAULT_OPTIONS.textureSizes),
+        skipClustering: partial.skipClustering ?? DEFAULT_OPTIONS.skipClustering,
     };
 }
 
@@ -60,7 +61,10 @@ export async function compileWithDiagnostics(
 
     const allPolygons = [...clipped, ...entityPolys];
 
-    if (allPolygons.length === 0) {
+    // Remove CLIP-textured polygons — they define collision volumes, not visible geometry
+    const visiblePolygons = allPolygons.filter(p => p.face.textureName !== 'clip');
+
+    if (visiblePolygons.length === 0) {
         // Empty map — return minimal GLB
         const glb = await exportGLB([], [], [{
             bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
@@ -72,14 +76,15 @@ export async function compileWithDiagnostics(
         return { glb, diagnostics };
     }
 
-    const mesh = triangulate(allPolygons, opts.textureSizes, diagnostics);
+    const mesh = triangulate(visiblePolygons, opts.textureSizes, diagnostics);
     const batches = mergeMaterials(mesh);
     const clusters = clusterGeometry(batches, {
         gridCellSize: opts.gridCellSize,
         maxClusterSize: opts.maxClusterSize,
         minClusterSize: opts.minClusterSize,
+        skipClustering: opts.skipClustering,
     }, diagnostics);
-    const bvh = buildBVH(clusters);
+    const bvh = buildBVH(clusters, { skipClustering: opts.skipClustering });
     const glb = await exportGLB(batches, clusters, bvh);
     return { glb, diagnostics };
 }
@@ -122,7 +127,10 @@ export async function compileDetailed(
 
     const allPolygons = [...clipped, ...entityPolys];
 
-    if (allPolygons.length === 0) {
+    // Remove CLIP-textured polygons — they define collision volumes, not visible geometry
+    const visiblePolygons = allPolygons.filter(p => p.face.textureName !== 'clip');
+
+    if (visiblePolygons.length === 0) {
         const emptyBVH = [{
             bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
             left: -1,
@@ -150,14 +158,15 @@ export async function compileDetailed(
         return { glb, diagnostics, stats };
     }
 
-    const mesh = triangulate(allPolygons, opts.textureSizes, diagnostics);
+    const mesh = triangulate(visiblePolygons, opts.textureSizes, diagnostics);
     const batches = mergeMaterials(mesh);
     const clusters = clusterGeometry(batches, {
         gridCellSize: opts.gridCellSize,
         maxClusterSize: opts.maxClusterSize,
         minClusterSize: opts.minClusterSize,
+        skipClustering: opts.skipClustering,
     }, diagnostics);
-    const bvh = buildBVH(clusters);
+    const bvh = buildBVH(clusters, { skipClustering: opts.skipClustering });
     const glb = await exportGLB(batches, clusters, bvh);
     const compileTimeMs = performance.now() - startTime;
 
@@ -166,7 +175,7 @@ export async function compileDetailed(
         entityCount: entities.length,
         brushCount: entities.reduce((s, e) => s + e.brushes.length, 0),
         polygonsBeforeCSG,
-        polygonsAfterCSG: clipped.length + entityPolys.length,
+        polygonsAfterCSG: visiblePolygons.length,
         triangleCount: mesh.indices.length / 3,
         materialCount: batches.length,
         clusterCount: clusters.length,

@@ -206,4 +206,24 @@ describe('04-triangulation', () => {
         expect(mesh.triangleBrushIndices[1]).toBe(7);
         expect(mesh.triangleBrushIndices[2]).toBe(5);
     });
+
+    it('should not produce geometry for CLIP-textured polygons when filtered', () => {
+        const visible = makePoly(
+            [{ x: 0, y: 0, z: 0 }, { x: 64, y: 0, z: 0 }, { x: 64, y: 64, z: 0 }, { x: 0, y: 64, z: 0 }],
+            'brick', 0, 0,
+        );
+        const clipPoly = makePoly(
+            [{ x: 100, y: 0, z: 0 }, { x: 164, y: 0, z: 0 }, { x: 164, y: 64, z: 0 }, { x: 100, y: 64, z: 0 }],
+            'clip', 1, 0,
+        );
+        // The compiler filters CLIP polygons before triangulation;
+        // verify that triangulating only non-CLIP polygons works correctly
+        const allPolygons = [visible, clipPoly];
+        const visiblePolygons = allPolygons.filter(p => p.face.textureName !== 'clip');
+        const mesh = triangulate(visiblePolygons, new Map());
+        // Only the brick quad should produce triangles (2 triangles)
+        expect(mesh.indices.length / 3).toBe(2);
+        expect(mesh.triangleMaterials.every(m => m === 'brick')).toBe(true);
+        expect(mesh.triangleMaterials).not.toContain('clip');
+    });
 });

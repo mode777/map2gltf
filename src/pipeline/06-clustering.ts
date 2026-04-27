@@ -6,6 +6,7 @@ export interface ClusterOptions {
     gridCellSize: number;
     maxClusterSize: number;
     minClusterSize: number;
+    skipClustering?: boolean;
 }
 
 const DEFAULT_GRID_CELL_SIZE = 16;
@@ -365,6 +366,15 @@ export function clusterGeometry(
     options?: Partial<ClusterOptions>,
     diagnostics?: Diagnostics,
 ): Cluster[] {
+    // Skip spatial clustering: one cluster per material batch
+    if (options?.skipClustering) {
+        return batches.map(batch => {
+            const triCount = batch.indices.length / 3;
+            const allTriangles = Array.from({ length: triCount }, (_, i) => i);
+            return buildCluster(allTriangles, batch);
+        });
+    }
+
     const gridCellSize = options?.gridCellSize ?? DEFAULT_GRID_CELL_SIZE;
     const maxClusterSize = options?.maxClusterSize ?? DEFAULT_MAX_CLUSTER_SIZE;
     const minClusterSize = options?.minClusterSize ?? DEFAULT_MIN_CLUSTER_SIZE;

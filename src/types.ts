@@ -25,6 +25,7 @@ export interface CompileOptions {
     readonly bvhLeafThreshold: number;
     readonly sahCandidates: number;
     readonly textureSizes: Map<string, [number, number]>;
+    readonly skipClustering: boolean;
 }
 
 export const DEFAULT_OPTIONS: CompileOptions = {
@@ -38,6 +39,7 @@ export const DEFAULT_OPTIONS: CompileOptions = {
     bvhLeafThreshold: 4,
     sahCandidates: 12,
     textureSizes: new Map(),
+    skipClustering: false,
 };
 
 export interface DiagnosticMessage {
