@@ -4,6 +4,10 @@ import { mergeAABBs, surfaceArea, centroid as aabbCentroid } from '../math/aabb.
 const BVH_LEAF_THRESHOLD = 4;
 const SAH_CANDIDATES = 12;
 
+export interface BVHOptions {
+    leafThreshold?: number;
+}
+
 function mergeClusterAABBs(clusters: Cluster[], indices: number[]): AABB {
     let result = clusters[indices[0]!]!.bounds;
     for (let i = 1; i < indices.length; i++) {
@@ -69,11 +73,9 @@ function findBestSplit(
     return { axis: bestAxis, splitPos: bestPos, cost: bestCost };
 }
 
-export interface BVHOptions {
-    skipClustering?: boolean;
-}
-
 export function buildBVH(clusters: Cluster[], options?: BVHOptions): BVHNode[] {
+    const leafThreshold = options?.leafThreshold ?? BVH_LEAF_THRESHOLD;
+
     if (clusters.length === 0) {
         return [{
             bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
@@ -81,19 +83,6 @@ export function buildBVH(clusters: Cluster[], options?: BVHOptions): BVHNode[] {
             right: -1,
             firstCluster: 0,
             clusterCount: 0,
-        }];
-    }
-
-    // When clustering is skipped, produce a single leaf wrapping all clusters
-    if (options?.skipClustering) {
-        const allIndices = [...Array(clusters.length).keys()];
-        const bounds = mergeClusterAABBs(clusters, allIndices);
-        return [{
-            bounds,
-            left: -1,
-            right: -1,
-            firstCluster: 0,
-            clusterCount: clusters.length,
         }];
     }
 
@@ -106,7 +95,7 @@ export function buildBVH(clusters: Cluster[], options?: BVHOptions): BVHNode[] {
         const bounds = mergeClusterAABBs(clusters, clusterIndices);
 
         // Leaf case
-        if (clusterIndices.length <= BVH_LEAF_THRESHOLD) {
+        if (clusterIndices.length <= leafThreshold) {
             const firstCluster = orderedClusters.length;
             for (const ci of clusterIndices) {
                 orderedClusters.push(ci);

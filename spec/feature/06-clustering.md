@@ -1,4 +1,4 @@
-# Step 6 — Spatial Cluster Generation
+# Feature 6 — Spatial Cluster Generation
 
 [← Back to main spec](../spec.md)
 
@@ -13,10 +13,17 @@ Group triangles within each material batch into spatially coherent clusters that
 
 ### Skip-Clustering Mode
 
-When `skipClustering` is `true` in `ClusterOptions`, spatial clustering is bypassed entirely. Each `MaterialBatch` produces exactly **one `Cluster`** containing all its triangles. No grid assignment, splitting, or merging is performed. Forsyth index reordering is still applied. This results in one cluster per material, which causes the BVH (Step 7) to degenerate to a single leaf node for typical material counts.
+When `skipWorldspawnClustering` is `true` in `ClusterOptions`, only **worldspawn spatial clustering** is bypassed. Each material batch emits:
 
-**Input:** `MaterialBatch[]` (from [Step 5](05-material-merge.md)), each batch carrying `triangleEntityIndices` and `triangleBrushIndices` metadata arrays.
+- exactly one **worldspawn** cluster containing all worldspawn triangles for that material, and
+- one **entity cluster** per non-worldspawn `entityIndex` for that material.
+
+Worldspawn grid assignment, worldspawn splitting, and worldspawn merging are skipped. Entity separation is preserved. Forsyth index reordering is still applied to every emitted cluster.
+
+**Input:** `MaterialBatch[]` (from [Feature 5](05-material-merge.md)), each batch carrying `triangleEntityIndices` and `triangleBrushIndices` metadata arrays.
 **Output:** `Cluster[]`
+
+**Primary code file:** `src/pipeline/06-clustering.ts`
 
 ---
 
@@ -29,6 +36,8 @@ interface Cluster {
     triangleIndices: number[];  // indices of source triangles (for traceability)
     vertices: Vertex[];         // compacted vertex buffer for this cluster
     indices: number[];          // triangle indices into this cluster's vertex buffer
+    entityIndex: number;        // 0 for worldspawn, >0 for exported entities
+    isWorldspawn: boolean;
 }
 ```
 
@@ -85,10 +94,12 @@ Within each cluster, triangle indices are reordered using the **Forsyth algorith
 8. **Entity triangles → one cluster per entity:** Provide a batch with triangles from entity 1 and entity 2. Assert exactly 2 entity clusters, one per entity.
 9. **Mixed batch:** A batch with both worldspawn and entity triangles. Assert worldspawn is spatially clustered and entity triangles produce separate clusters.
 10. **Brush integrity:** No brush's triangles appear in more than one cluster.
+11. **Skip worldspawn clustering:** With `skipWorldspawnClustering: true`, a worldspawn-only batch emits exactly one worldspawn cluster per material batch.
+12. **Skip mode preserves entities:** With `skipWorldspawnClustering: true`, mixed batches still emit one cluster per non-worldspawn entity and never mix worldspawn with entity triangles.
 
 ### Integration Smoke Test
 
-Run Steps 1–6 on `tests/fixtures/large-map.map` (50+ brushes). Assert: (a) every worldspawn cluster has between 8 and 512 triangles, (b) the sum of all cluster triangle counts equals the total from Step 5, and (c) cluster AABBs do not extend beyond the global map AABB.
+Run Features 1–6 on `tests/fixtures/large-map.map` (50+ brushes). Assert: (a) every worldspawn cluster has between 8 and 512 triangles, (b) the sum of all cluster triangle counts equals the total from Feature 5, and (c) cluster AABBs do not extend beyond the global map AABB.
 
 ---
 
@@ -110,6 +121,11 @@ export function clusterGeometry(
 ```
 for each batch:
     partition triangles into worldspawn vs entity groups by triangleEntityIndices
+
+    if skipWorldspawnClustering:
+        emit one worldspawn cluster for all worldspawn triangles in the batch
+        emit one entity cluster for each unique entityIndex >= 1
+        continue
 
     // Worldspawn: brush-intact spatial clustering
     brushGroups = groupTrianglesByBrush(worldspawnTriangles, triangleBrushIndices)

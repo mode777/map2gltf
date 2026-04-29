@@ -25,7 +25,7 @@ function resolveOptions(partial?: Partial<CompileOptions>): CompileOptions {
         bvhLeafThreshold: partial.bvhLeafThreshold ?? DEFAULT_OPTIONS.bvhLeafThreshold,
         sahCandidates: partial.sahCandidates ?? DEFAULT_OPTIONS.sahCandidates,
         textureSizes: partial.textureSizes ?? new Map(DEFAULT_OPTIONS.textureSizes),
-        skipClustering: partial.skipClustering ?? DEFAULT_OPTIONS.skipClustering,
+        skipWorldspawnClustering: partial.skipWorldspawnClustering ?? DEFAULT_OPTIONS.skipWorldspawnClustering,
     };
 }
 
@@ -72,20 +72,22 @@ export async function compileWithDiagnostics(
             right: -1,
             firstCluster: 0,
             clusterCount: 0,
-        }]);
+        }], [], entities);
         return { glb, diagnostics };
     }
 
-    const mesh = triangulate(visiblePolygons, opts.textureSizes, diagnostics);
+    const mesh = triangulate(visiblePolygons, opts.textureSizes, diagnostics, opts.defaultTextureSize);
     const batches = mergeMaterials(mesh);
     const clusters = clusterGeometry(batches, {
         gridCellSize: opts.gridCellSize,
         maxClusterSize: opts.maxClusterSize,
         minClusterSize: opts.minClusterSize,
-        skipClustering: opts.skipClustering,
+        skipWorldspawnClustering: opts.skipWorldspawnClustering,
     }, diagnostics);
-    const bvh = buildBVH(clusters, { skipClustering: opts.skipClustering });
-    const glb = await exportGLB(batches, clusters, bvh);
+    const worldClusters = clusters.filter(cluster => cluster.isWorldspawn);
+    const entityClusters = clusters.filter(cluster => !cluster.isWorldspawn);
+    const bvh = buildBVH(worldClusters, { leafThreshold: opts.bvhLeafThreshold });
+    const glb = await exportGLB(batches, worldClusters, bvh, entityClusters, entities);
     return { glb, diagnostics };
 }
 
@@ -138,7 +140,7 @@ export async function compileDetailed(
             firstCluster: 0,
             clusterCount: 0,
         }] as import('./types.js').BVHNode[];
-        const glb = await exportGLB([], [], emptyBVH);
+        const glb = await exportGLB([], [], emptyBVH, [], entities);
         const compileTimeMs = performance.now() - startTime;
         const stats: CompileStats = {
             entityCount: entities.length,
@@ -158,16 +160,18 @@ export async function compileDetailed(
         return { glb, diagnostics, stats };
     }
 
-    const mesh = triangulate(visiblePolygons, opts.textureSizes, diagnostics);
+    const mesh = triangulate(visiblePolygons, opts.textureSizes, diagnostics, opts.defaultTextureSize);
     const batches = mergeMaterials(mesh);
     const clusters = clusterGeometry(batches, {
         gridCellSize: opts.gridCellSize,
         maxClusterSize: opts.maxClusterSize,
         minClusterSize: opts.minClusterSize,
-        skipClustering: opts.skipClustering,
+        skipWorldspawnClustering: opts.skipWorldspawnClustering,
     }, diagnostics);
-    const bvh = buildBVH(clusters, { skipClustering: opts.skipClustering });
-    const glb = await exportGLB(batches, clusters, bvh);
+    const worldClusters = clusters.filter(cluster => cluster.isWorldspawn);
+    const entityClusters = clusters.filter(cluster => !cluster.isWorldspawn);
+    const bvh = buildBVH(worldClusters, { leafThreshold: opts.bvhLeafThreshold });
+    const glb = await exportGLB(batches, worldClusters, bvh, entityClusters, entities);
     const compileTimeMs = performance.now() - startTime;
 
     const bvhLeafCount = bvh.filter(n => n.left === -1).length;

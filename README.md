@@ -59,7 +59,37 @@ npx map2gltf input.map -o output.glb
 
 # Verbose mode (prints diagnostics)
 npx map2gltf input.map -v
+
+# Override fallback UV dimensions for unresolved textures
+npx map2gltf input.map --default-texture-size 128
+
+# Tune clustering and BVH generation
+npx map2gltf input.map --grid-cell-size 32 --max-cluster-size 256 --min-cluster-size 16 --bvh-leaf-threshold 8
+
+# Skip worldspawn clustering
+npx map2gltf input.map --no-clustering
 ```
+
+Supported CLI options:
+
+| Flag | Description |
+|------|-------------|
+| `-o`, `--output <file>` | Write the output GLB to an explicit path |
+| `--default-texture-size <n>` | Use `<n>x<n>` as the UV fallback size when a texture is missing from `textureSizes` |
+| `--grid-cell-size <n>` | Override the worldspawn clustering grid cell size |
+| `--max-cluster-size <n>` | Override the maximum worldspawn cluster size |
+| `--min-cluster-size <n>` | Override the minimum worldspawn cluster size |
+| `--bvh-leaf-threshold <n>` | Override the BVH leaf cutoff |
+| `--no-clustering` | Disable worldspawn spatial clustering |
+| `-v`, `--verbose` | Print compiler warnings and errors to stderr |
+| `-h`, `--help` | Show CLI usage |
+
+CLI contract:
+
+- Exactly one positional input file is accepted.
+- Unknown options are rejected.
+- Options that require values fail fast when the value is missing or not a positive integer.
+- `--default-texture-size` changes fallback UV normalization only; it does not load texture metadata from disk.
 
 ## Web Application
 

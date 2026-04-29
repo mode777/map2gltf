@@ -6,7 +6,7 @@ export interface ClusterOptions {
     gridCellSize: number;
     maxClusterSize: number;
     minClusterSize: number;
-    skipClustering?: boolean;
+    skipWorldspawnClustering?: boolean;
 }
 
 const DEFAULT_GRID_CELL_SIZE = 16;
@@ -189,6 +189,8 @@ interface PendingCluster {
     materialID: number;
     triangles: number[]; // triangle indices into the batch
     batch: MaterialBatch;
+    entityIndex: number;
+    isWorldspawn: boolean;
 }
 
 function enforceMaxSize(triangles: number[], batch: MaterialBatch, maxSize: number): number[][] {
@@ -288,7 +290,12 @@ function enforceMaxSizeByBrush(
     ];
 }
 
-function buildCluster(triangles: number[], batch: MaterialBatch): Cluster {
+function buildCluster(
+    triangles: number[],
+    batch: MaterialBatch,
+    entityIndex: number,
+    isWorldspawn: boolean,
+): Cluster {
     // Collect unique vertices referenced by these triangles
     const vertexMap = new Map<number, number>();
     const clusterVerts: Vertex[] = [];
@@ -319,6 +326,8 @@ function buildCluster(triangles: number[], batch: MaterialBatch): Cluster {
         triangleIndices: triangles,
         vertices: clusterVerts,
         indices: optimizedIndices,
+        entityIndex,
+        isWorldspawn,
     };
 }
 
@@ -354,6 +363,8 @@ function clusterWorldspawn(
                 materialID: batch.materialID,
                 triangles,
                 batch,
+                entityIndex: 0,
+                isWorldspawn: true,
             });
         }
     }
@@ -366,18 +377,10 @@ export function clusterGeometry(
     options?: Partial<ClusterOptions>,
     diagnostics?: Diagnostics,
 ): Cluster[] {
-    // Skip spatial clustering: one cluster per material batch
-    if (options?.skipClustering) {
-        return batches.map(batch => {
-            const triCount = batch.indices.length / 3;
-            const allTriangles = Array.from({ length: triCount }, (_, i) => i);
-            return buildCluster(allTriangles, batch);
-        });
-    }
-
     const gridCellSize = options?.gridCellSize ?? DEFAULT_GRID_CELL_SIZE;
     const maxClusterSize = options?.maxClusterSize ?? DEFAULT_MAX_CLUSTER_SIZE;
     const minClusterSize = options?.minClusterSize ?? DEFAULT_MIN_CLUSTER_SIZE;
+    const skipWorldspawnClustering = options?.skipWorldspawnClustering ?? false;
 
     const allPending: PendingCluster[] = [];
 
@@ -399,72 +402,76 @@ export function clusterGeometry(
             }
         }
 
-        // A) Worldspawn: brush-intact spatial grid clustering
-        const worldPending = clusterWorldspawn(
-            worldTriangles, batch, gridCellSize, maxClusterSize, minClusterSize, diagnostics,
-        );
-        allPending.push(...worldPending);
+        // A) Worldspawn: brush-intact spatial grid clustering, unless explicitly skipped.
+        if (skipWorldspawnClustering) {
+            if (worldTriangles.length > 0) {
+                allPending.push({
+                    materialID: batch.materialID,
+                    triangles: worldTriangles,
+                    batch,
+                    entityIndex: 0,
+                    isWorldspawn: true,
+                });
+            }
+        } else {
+            const worldPending = clusterWorldspawn(
+                worldTriangles, batch, gridCellSize, maxClusterSize, minClusterSize, diagnostics,
+            );
+            allPending.push(...worldPending);
+        }
 
         // B) Non-worldspawn: one cluster per entity per material (no splitting)
-        for (const [, triangles] of entityGroups) {
+        for (const [entityIndex, triangles] of entityGroups) {
             allPending.push({
                 materialID: batch.materialID,
                 triangles,
                 batch,
+                entityIndex,
+                isWorldspawn: false,
             });
         }
     }
 
     // Merge undersized worldspawn clusters into nearest same-material neighbor
     // (only worldspawn clusters participate in merging)
-    let changed = true;
-    while (changed) {
-        changed = false;
-        for (let i = 0; i < allPending.length; i++) {
-            const cluster = allPending[i]!;
-            if (cluster.triangles.length >= minClusterSize) continue;
+    if (!skipWorldspawnClustering) {
+        let changed = true;
+        while (changed) {
+            changed = false;
+            for (let i = 0; i < allPending.length; i++) {
+                const cluster = allPending[i]!;
+                if (cluster.triangles.length >= minClusterSize || !cluster.isWorldspawn) continue;
 
-            // Skip non-worldspawn clusters (they must not be merged)
-            const isWorldspawn = cluster.triangles.every(
-                ti => (cluster.batch.triangleEntityIndices[ti] ?? 0) === 0,
-            );
-            if (!isWorldspawn) continue;
+                // Find nearest same-material worldspawn neighbor
+                let bestDist = Infinity;
+                let bestIdx = -1;
+                const cA = pendingClusterCentroid(cluster);
 
-            // Find nearest same-material worldspawn neighbor
-            let bestDist = Infinity;
-            let bestIdx = -1;
-            const cA = pendingClusterCentroid(cluster);
+                for (let j = 0; j < allPending.length; j++) {
+                    if (i === j) continue;
+                    const other = allPending[j]!;
+                    if (other.materialID !== cluster.materialID || !other.isWorldspawn) continue;
+                    if (other.triangles.length + cluster.triangles.length > maxClusterSize) continue;
 
-            for (let j = 0; j < allPending.length; j++) {
-                if (i === j) continue;
-                const other = allPending[j]!;
-                if (other.materialID !== cluster.materialID) continue;
-
-                // Only merge with other worldspawn clusters
-                const otherIsWorldspawn = other.triangles.every(
-                    ti => (other.batch.triangleEntityIndices[ti] ?? 0) === 0,
-                );
-                if (!otherIsWorldspawn) continue;
-                if (other.triangles.length + cluster.triangles.length > maxClusterSize) continue;
-
-                const cB = pendingClusterCentroid(other);
-                const dist = vec3.length(vec3.sub(cA, cB));
-                if (dist < bestDist) {
-                    bestDist = dist;
-                    bestIdx = j;
+                    const cB = pendingClusterCentroid(other);
+                    const dist = vec3.length(vec3.sub(cA, cB));
+                    if (dist < bestDist) {
+                        bestDist = dist;
+                        bestIdx = j;
+                    }
                 }
-            }
 
-            if (bestIdx >= 0) {
-                allPending[bestIdx]!.triangles.push(...cluster.triangles);
-                allPending.splice(i, 1);
-                changed = true;
-                break; // restart loop after mutation
+                if (bestIdx >= 0) {
+                    allPending[bestIdx]!.triangles.push(...cluster.triangles);
+                    allPending.splice(i, 1);
+                    changed = true;
+                    break; // restart loop after mutation
+                }
             }
         }
     }
 
-    return allPending.map(p => buildCluster(p.triangles, p.batch));
+    return allPending.map(p => buildCluster(p.triangles, p.batch, p.entityIndex, p.isWorldspawn));
 }
 
 function pendingClusterCentroid(c: PendingCluster): Vec3 {

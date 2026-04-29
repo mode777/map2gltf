@@ -1,4 +1,4 @@
-# Step 1 — Map Parsing (Standard & Valve 220)
+# Feature 1 — Map Parsing (Standard & Valve 220)
 
 [← Back to main spec](../spec.md)
 
@@ -10,6 +10,8 @@ Parse a plain-text Quake `.map` file in the **Standard Quake format** or the **V
 
 **Input:** `.map` file contents (string)
 **Output:** `ParsedEntity[]`
+
+**Primary code file:** `src/pipeline/01-map-parsing.ts`
 
 ---
 
@@ -43,7 +45,7 @@ flowchart TD
     B1 --> F2["Face 1..K"]
 ```
 
-The compiler processes **only brush geometry**. Entity key-value metadata (classname, origin, spawnflags, etc.) is parsed and stored in the output but does not affect geometry compilation. The `worldspawn` entity (entity 0) contains the static world brushes — these are the only brushes that participate in inter-brush CSG (Step 3). Other entities may contain brushes (func_wall, func_door, etc.) which are passed through to triangulation without CSG, preserving their full geometry.
+The compiler processes **only brush geometry**. Entity key-value metadata (classname, origin, spawnflags, etc.) is parsed and stored in the output but does not affect geometry compilation. The `worldspawn` entity (entity 0) contains the static world brushes — these are the only brushes that participate in inter-brush CSG (Feature 3). Other entities may contain brushes (func_wall, func_door, etc.) which are passed through to triangulation without CSG, preserving their full geometry.
 
 ---
 

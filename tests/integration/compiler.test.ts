@@ -100,21 +100,34 @@ describe('integration: compile()', () => {
         expect(materialNames.some(n => n === 'brick')).toBe(true);
     });
 
-    it('should compile with skipClustering producing one cluster per material', async () => {
-        const source = readFixture('two-rooms.map');
-        const { stats } = await compileDetailed(source, { skipClustering: true });
-        // One cluster per material
-        expect(stats.clusterCount).toBe(stats.materialCount);
-        // Single BVH node when clustering is skipped
-        expect(stats.bvhNodeCount).toBe(1);
-        expect(stats.bvhLeafCount).toBe(1);
-        expect(stats.bvhDepth).toBe(1);
+    it('should compile with skipWorldspawnClustering preserving entity clusters', async () => {
+        const source = readFixture('worldspawn-entities.map');
+        const { stats } = await compileDetailed(source, { skipWorldspawnClustering: true });
+        expect(stats.entityCount).toBe(3);
+        expect(stats.clusterCount).toBeGreaterThan(stats.materialCount);
+        expect(stats.bvhNodeCount).toBeGreaterThanOrEqual(1);
     });
 
-    it('skipClustering should not change triangle count', async () => {
-        const source = readFixture('two-rooms.map');
+    it('skipWorldspawnClustering should not change triangle count', async () => {
+        const source = readFixture('worldspawn-entities.map');
         const normal = await compileDetailed(source);
-        const skipped = await compileDetailed(source, { skipClustering: true });
+        const skipped = await compileDetailed(source, { skipWorldspawnClustering: true });
         expect(skipped.stats.triangleCount).toBe(normal.stats.triangleCount);
+    });
+
+    it('should export an entities branch with identifiable entity meshes', async () => {
+        const source = readFixture('worldspawn-entities.map');
+        const glb = await compile(source, { skipWorldspawnClustering: true });
+        const io = new NodeIO();
+        const doc = await io.readBinary(glb);
+
+        const entityNodes = doc.getRoot().listNodes().filter(node => node.getName().startsWith('entity_'));
+        expect(entityNodes).toHaveLength(2);
+
+        const entityMeshes = doc.getRoot().listMeshes().filter(mesh => mesh.getName().startsWith('entity_'));
+        expect(entityMeshes).toHaveLength(2);
+
+        const entitiesGroup = doc.getRoot().listNodes().find(node => node.getName() === 'entities');
+        expect(entitiesGroup).toBeTruthy();
     });
 });

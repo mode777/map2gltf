@@ -5,6 +5,7 @@ export function triangulate(
     polygons: ConvexPolygon[],
     textureSizes: Map<string, [number, number]>,
     diagnostics?: Diagnostics,
+    defaultTextureSize = 64,
 ): TriangulatedMesh {
     const vertices: Vertex[] = [];
     const indices: number[] = [];
@@ -12,7 +13,7 @@ export function triangulate(
     const triangleEntityIndices: number[] = [];
     const triangleBrushIndices: number[] = [];
 
-    const defaultSize: [number, number] = [64, 64];
+    const defaultSize: [number, number] = [defaultTextureSize, defaultTextureSize];
 
     for (const poly of polygons) {
         const face = poly.face;
@@ -21,7 +22,7 @@ export function triangulate(
         if (!size && diagnostics) {
             diagnostics.warnings.push({
                 step: '04-triangulation',
-                message: `Texture '${face.textureName}' not found, using default 64x64`,
+                message: `Texture '${face.textureName}' not found, using default ${defaultTextureSize}x${defaultTextureSize}`,
             });
         }
         const [texW, texH] = size ?? defaultSize;

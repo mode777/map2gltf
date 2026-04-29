@@ -1,4 +1,4 @@
-# Step 8 — glTF/GLB Export
+# Feature 8 — glTF/GLB Export
 
 [← Back to main spec](../spec.md)
 
@@ -6,10 +6,12 @@
 
 ## Overview
 
-Serialize all compiled data into a single **GLB** (glTF Binary) file. The BVH is encoded as the glTF node hierarchy, clusters map to mesh primitives, and vertex/index data is stored in the GLB binary chunk for direct GPU upload.
+Serialize all compiled data into a single **GLB** (glTF Binary) file. The worldspawn BVH is encoded as a glTF node hierarchy, worldspawn clusters map to world mesh primitives, and non-worldspawn entities are exported as independently identifiable meshes and nodes.
 
-**Input:** All compiled data from Steps 5–7 (`MaterialBatch[]`, `Cluster[]`, `BVHNode[]`)
+**Input:** Material batches, worldspawn clusters, worldspawn BVH nodes, non-worldspawn entity clusters, and parsed entity metadata
 **Output:** `.glb` file (glTF 2.0 Binary)
+
+**Primary code file:** `src/pipeline/08-binary-export.ts`
 
 ---
 
@@ -34,9 +36,9 @@ Quake uses **Z-up, right-handed**. glTF uses **Y-up, right-handed**. The exporte
 
 ---
 
-## BVH → Node Hierarchy
+## Worldspawn BVH → Node Hierarchy
 
-Each `BVHNode` from Step 7 becomes a glTF node. The tree structure is encoded via the `children` property.
+Each `BVHNode` from Feature 7 becomes a glTF node. The tree structure is encoded via the `children` property.
 
 ### Interior Node
 
@@ -66,13 +68,13 @@ No `mesh` reference. The `children` array contains the indices of the left and r
 }
 ```
 
-The `mesh` property references a glTF mesh whose primitives contain the leaf's cluster geometry.
+The `mesh` property references a glTF mesh whose primitives contain the leaf's **worldspawn** cluster geometry.
 
 ---
 
-## Clusters → Meshes & Primitives
+## Worldspawn Clusters → Meshes & Primitives
 
-Each BVH leaf node references **one glTF mesh**. That mesh contains **one primitive per cluster** in the leaf's cluster range. Each primitive has its own material and index range.
+Each worldspawn BVH leaf node references **one glTF mesh**. That mesh contains **one primitive per worldspawn cluster** in the leaf's cluster range. Each primitive has its own material and index range.
 
 ```mermaid
 graph TD
@@ -131,9 +133,20 @@ All binary data is packed into a **single GLB buffer** (the BIN chunk). Buffer v
 | 2 | `ARRAY_BUFFER` (34962) | All texture coordinates (tightly packed `VEC2` floats) |
 | 3 | `ELEMENT_ARRAY_BUFFER` (34963) | All triangle indices (`UNSIGNED_INT`) |
 
-Vertex attributes are stored in **separate buffer views** (non-interleaved / struct-of-arrays layout). This matches the pipeline output from Steps 5–6 and allows the renderer to bind each attribute buffer independently.
+Vertex attributes are stored in **separate buffer views** (non-interleaved / struct-of-arrays layout). This matches the pipeline output from Features 5–6 and allows the renderer to bind each attribute buffer independently.
 
 All data is **little-endian** and **4-byte aligned** per the glTF spec. The GLB binary chunk is padded with trailing zeros to 4-byte alignment.
+
+---
+
+## Entity Export Branch
+
+Non-worldspawn entities are exported outside the worldspawn BVH as first-class scene objects.
+
+- The scene contains an `entities` grouping node when any entity geometry exists.
+- Each non-worldspawn entity with visible geometry gets exactly one node and exactly one mesh.
+- Each entity mesh contains one primitive per material used by that entity.
+- Entity node and mesh metadata preserve at least `entityIndex`, and include `classname` / `targetname` when available.
 
 ---
 
@@ -163,12 +176,12 @@ The output is a single `.glb` file following the glTF 2.0 Binary container spec:
 
 ## Scene Root
 
-The glTF scene contains a **single root node** which is the BVH root. All other BVH nodes are descendants.
+The glTF scene contains the worldspawn BVH root node and, when needed, a separate `entities` grouping node.
 
 ```json
 {
     "scene": 0,
-    "scenes": [{ "name": "map", "nodes": [0] }],
+    "scenes": [{ "name": "map", "nodes": [0, 1] }],
     "asset": {
         "version": "2.0",
         "generator": "map2gltf"
@@ -189,7 +202,8 @@ At load time, the renderer:
 1. Parses the GLB and extracts the JSON chunk.
 2. Uploads buffer views 0–3 directly to GPU vertex/index buffers (zero-copy where supported).
 3. Walks the node tree, reading `extras.aabb` from each node to rebuild a flat depth-first `BVHNode[]` array for frustum culling.
-4. Maps each mesh primitive's accessor offsets to draw call parameters (`firstIndex`, `indexCount`, `material`).
+4. Locates entity nodes/meshes deterministically via `entityIndex` metadata and/or stable `entity_<index>` naming.
+5. Maps each mesh primitive's accessor offsets to draw call parameters (`firstIndex`, `indexCount`, `material`).
 
 The node tree → flat array conversion is O(N) where N is the number of BVH nodes.
 
@@ -201,7 +215,7 @@ The node tree → flat array conversion is O(N) where N is the number of BVH nod
 
 1. **Valid GLB header:** Write a minimal GLB. Assert the first 12 bytes contain magic `0x46546C67`, version `2`, and correct total file length.
 2. **JSON chunk validity:** Parse the JSON chunk from the output GLB. Assert it is valid JSON and contains required top-level properties: `asset`, `scene`, `scenes`, `nodes`, `meshes`, `accessors`, `bufferViews`, `buffers`.
-3. **Asset metadata:** Assert `asset.version` is `"2.0"` and `asset.generator` is `"map2gltf"`.
+3. **Asset metadata:** Assert `asset.version` is `"2.0"`. Do not require a specific `asset.generator` string because `@gltf-transform/core` may override it during serialization.
 4. **Coordinate conversion:** Export a vertex at Quake position (X, Y, Z). Read back from the GLB buffer and assert it matches the Y-up conversion: (X, Z, −Y).
 5. **Node hierarchy matches BVH:** Rebuild the BVH tree from the glTF node hierarchy (`children` arrays). Assert it is isomorphic to the input `BVHNode[]` tree — same structure, same AABB values in `extras.aabb`.
 6. **AABB extras round-trip:** For every node, read `extras.aabb.min` and `extras.aabb.max`. Assert they match the original `BVHNode.bounds` (after coordinate conversion) within ε.
@@ -209,10 +223,14 @@ The node tree → flat array conversion is O(N) where N is the number of BVH nod
 8. **POSITION min/max:** For every `POSITION` accessor, assert `min` and `max` are defined and correctly bound all vertex positions in that accessor.
 9. **Material count:** Assert the number of glTF materials equals the number of unique texture names from the input.
 10. **4-byte alignment:** Assert every `bufferView.byteOffset` is a multiple of 4, and the BIN chunk length is a multiple of 4.
+11. **One mesh per entity:** For a scene containing two entities with visible geometry, assert the GLB contains two distinct entity meshes, one per `entityIndex`.
+12. **One node per entity:** Assert each entity mesh is referenced by exactly one entity node.
+13. **Entity metadata:** Assert entity nodes and/or meshes preserve `entityIndex`, `classname`, and `targetname` where available.
+14. **World/entity separation:** Assert worldspawn BVH leaf meshes do not contain non-worldspawn entity geometry.
 
 ### Integration Smoke Test
 
-Run the full pipeline (Steps 1–8) on `tests/fixtures/two-rooms.map`. Load the output `.glb` in a third-party glTF validator (e.g. `gltf-validator` npm package). Assert zero errors. Optionally load in three.js or Blender and confirm geometry is visually correct and materials are named as expected.
+Run the full pipeline (Features 1–8) on a mixed fixture containing worldspawn plus multiple entities with visible geometry. Load the output `.glb` in a third-party glTF validator (e.g. `gltf-validator` npm package). Assert zero errors, confirm the scene contains both the worldspawn BVH branch and the `entities` branch, and optionally load in three.js or Blender to verify visual correctness and entity isolation.
 
 ---
 
@@ -223,11 +241,14 @@ Run the full pipeline (Steps 1–8) on `tests/fixtures/two-rooms.map`. Load the 
 ```typescript
 // pipeline/08-binary-export.ts
 import { Document, NodeIO } from '@gltf-transform/core';
+import type { MaterialBatch, Cluster, BVHNode, ParsedEntity } from '../types.js';
 
 export async function exportGLB(
     batches: MaterialBatch[],
-    clusters: Cluster[],
-    bvh: BVHNode[]
+    worldClusters: Cluster[],
+    bvh: BVHNode[],
+    entityClusters?: Cluster[],
+    entities?: ParsedEntity[]
 ): Promise<Uint8Array>
 ```
 
@@ -240,8 +261,10 @@ export async function exportGLB(
 ```typescript
 function exportGLB(
     batches: MaterialBatch[],
-    clusters: Cluster[],
-    bvh: BVHNode[]
+    worldClusters: Cluster[],
+    bvh: BVHNode[],
+    entityClusters: Cluster[] = [],
+    entities: ParsedEntity[] = []
 ): Uint8Array {
     const doc = new Document();
     doc.getRoot().getAsset().generator = 'map2gltf';
@@ -257,46 +280,33 @@ function exportGLB(
             .setRoughnessFactor(1)
     );
 
-    // 2. Build glTF meshes for each BVH leaf
-    //    Each leaf's clusters become primitives of a single mesh
-    const meshes = new Map<number, GltfMesh>(); // leafNodeIndex → mesh
-
-    for (let ni = 0; ni < bvh.length; ni++) {
-        const node = bvh[ni]!;
-        if (node.left !== -1) continue; // interior node
-
-        const mesh = doc.createMesh(`leaf_${ni}`);
-        for (let ci = node.firstCluster; ci < node.firstCluster + node.clusterCount; ci++) {
-            const cluster = clusters[ci]!;
-            const batch = batches.find(b => b.materialID === cluster.materialID)!;
-
-            // Extract cluster's vertex/index slice, apply coordinate conversion
-            const prim = buildPrimitive(doc, buf, batch, cluster, materials);
-            mesh.addPrimitive(prim);
-        }
-        meshes.set(ni, mesh);
-    }
-
-    // 3. Build node hierarchy (depth-first traversal of BVH)
+    // 2. Build worldspawn BVH node hierarchy.
     const gltfNodes: GltfNode[] = [];
     for (let ni = 0; ni < bvh.length; ni++) {
         const bvhNode = bvh[ni]!;
-        const gNode = doc.createNode(bvhNode.left === -1 ? `bvh_leaf_${ni}` : `bvh_${ni}`);
+        const isLeaf = bvhNode.left === -1;
+        const gNode = doc.createNode(isLeaf ? `bvh_leaf_${ni}` : `bvh_${ni}`);
 
         // Store AABB in extras (after coordinate conversion)
         gNode.setExtras({
-            nodeType: bvhNode.left === -1 ? 'leaf' : 'interior',
+            nodeType: isLeaf ? 'leaf' : 'interior',
             aabb: convertAABB(bvhNode.bounds)
         });
 
-        if (bvhNode.left === -1) {
-            gNode.setMesh(meshes.get(ni)!);
+        if (isLeaf && bvhNode.clusterCount > 0) {
+            const mesh = doc.createMesh(`mesh_${ni}`);
+            for (let ci = bvhNode.firstCluster; ci < bvhNode.firstCluster + bvhNode.clusterCount; ci++) {
+                const cluster = worldClusters[ci]!;
+                const prim = buildPrimitive(doc, buf, cluster, materials);
+                mesh.addPrimitive(prim);
+            }
+            gNode.setMesh(mesh);
         }
 
         gltfNodes.push(gNode);
     }
 
-    // 4. Wire up parent-child relationships
+    // 3. Wire up parent-child relationships.
     for (let ni = 0; ni < bvh.length; ni++) {
         const bvhNode = bvh[ni]!;
         if (bvhNode.left !== -1) {
@@ -305,10 +315,45 @@ function exportGLB(
         }
     }
 
-    // 5. Add root to scene
-    scene.addChild(gltfNodes[0]!);
+    // 4. Add worldspawn BVH root to scene.
+    if (gltfNodes.length > 0) {
+        scene.addChild(gltfNodes[0]!);
+    }
 
-    // 6. Serialize to GLB
+    // 5. Export non-worldspawn entities as independently identifiable scene objects.
+    const byEntity = groupClustersByEntityIndex(entityClusters);
+    if (byEntity.size > 0) {
+        const entitiesGroup = doc.createNode('entities');
+        for (const [entityIndex, clustersForEntity] of byEntity) {
+            const entity = entities[entityIndex];
+            const classname = entity?.properties.classname;
+            const targetname = entity?.properties.targetname;
+            const baseName = classname ? `entity_${entityIndex}_${classname}` : `entity_${entityIndex}`;
+
+            const entityMesh = doc.createMesh(baseName);
+            for (const cluster of clustersForEntity) {
+                const prim = buildPrimitive(doc, buf, cluster, materials);
+                entityMesh.addPrimitive(prim);
+            }
+
+            entityMesh.setExtras({ entityIndex, classname, targetname });
+
+            const entityNode = doc.createNode(baseName)
+                .setMesh(entityMesh)
+                .setExtras({
+                    entityIndex,
+                    classname,
+                    targetname,
+                    aabb: convertAABB(mergeAABBs(clustersForEntity.map(cluster => cluster.bounds))),
+                });
+
+            entitiesGroup.addChild(entityNode);
+        }
+
+        scene.addChild(entitiesGroup);
+    }
+
+    // 6. Serialize to GLB.
     const io = new NodeIO();
     return io.writeBinary(doc);
 }
@@ -336,7 +381,7 @@ function convertAABB(aabb: AABB): { min: number[], max: number[] } {
 
 ### Primitive Construction
 
-For each cluster, extract the relevant slice of the batch's vertex and index buffers. Create typed arrays for positions, normals, UVs (as `Float32Array`), and indices (as `Uint32Array`). Apply coordinate conversion to positions and normals before writing. Use `@gltf-transform/core` accessor API to attach data to the buffer.
+For each cluster, create typed arrays for positions, normals, UVs (as `Float32Array`), and indices (as `Uint32Array`) from the cluster's compacted vertex/index buffers. Apply coordinate conversion to positions and normals before writing. Use `@gltf-transform/core` accessor API to attach data to the document buffer.
 
 ### Buffer View Layout
 

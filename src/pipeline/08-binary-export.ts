@@ -1,5 +1,6 @@
-import { Document, NodeIO, Buffer as GltfBuffer } from '@gltf-transform/core';
-import type { MaterialBatch, Cluster, BVHNode, Vec3 } from '../types.js';
+import { Document, NodeIO } from '@gltf-transform/core';
+import type { MaterialBatch, Cluster, BVHNode, Vec3, ParsedEntity } from '../types.js';
+import { mergeAABBs } from '../math/aabb.js';
 
 function convertCoord(v: Vec3): [number, number, number] {
     // Quake Z-up → glTF Y-up: rotate -90° around X
@@ -31,8 +32,10 @@ function convertAABB(aabb: { min: Vec3; max: Vec3 }): { min: number[]; max: numb
 
 export async function exportGLB(
     batches: MaterialBatch[],
-    clusters: Cluster[],
+    worldClusters: Cluster[],
     bvh: BVHNode[],
+    entityClusters: Cluster[] = [],
+    entities: ParsedEntity[] = [],
 ): Promise<Uint8Array> {
     const doc = new Document();
     doc.getRoot().getAsset().generator = 'map2gltf';
@@ -52,7 +55,54 @@ export async function exportGLB(
         }
     }
 
-    // Build glTF nodes for each BVH node
+    function createPrimitive(meshCluster: Cluster) {
+        const positions: number[] = [];
+        const normals: number[] = [];
+        const texcoords: number[] = [];
+
+        for (const vert of meshCluster.vertices) {
+            const [px, py, pz] = convertCoord(vert.position);
+            positions.push(px, py, pz);
+            const [nx, ny, nz] = convertCoord(vert.normal);
+            normals.push(nx, ny, nz);
+            texcoords.push(vert.uv.x, vert.uv.y);
+        }
+
+        const posAccessor = doc.createAccessor()
+            .setType('VEC3')
+            .setArray(new Float32Array(positions))
+            .setBuffer(buf);
+
+        const normAccessor = doc.createAccessor()
+            .setType('VEC3')
+            .setArray(new Float32Array(normals))
+            .setBuffer(buf);
+
+        const uvAccessor = doc.createAccessor()
+            .setType('VEC2')
+            .setArray(new Float32Array(texcoords))
+            .setBuffer(buf);
+
+        const indexAccessor = doc.createAccessor()
+            .setType('SCALAR')
+            .setArray(new Uint32Array(meshCluster.indices))
+            .setBuffer(buf);
+
+        const prim = doc.createPrimitive()
+            .setAttribute('POSITION', posAccessor)
+            .setAttribute('NORMAL', normAccessor)
+            .setAttribute('TEXCOORD_0', uvAccessor)
+            .setIndices(indexAccessor);
+
+        const mat = materialMap.get(meshCluster.materialID);
+        if (mat) {
+            prim.setMaterial(mat);
+        }
+
+        return prim;
+    }
+
+    // Build glTF nodes for each worldspawn BVH node.
     const gltfNodes: Array<ReturnType<Document['createNode']>> = [];
 
     for (let ni = 0; ni < bvh.length; ni++) {
@@ -71,53 +121,9 @@ export async function exportGLB(
             const mesh = doc.createMesh(`mesh_${ni}`);
 
             for (let ci = bvhNode.firstCluster; ci < bvhNode.firstCluster + bvhNode.clusterCount; ci++) {
-                const cluster = clusters[ci];
+                const cluster = worldClusters[ci];
                 if (!cluster) continue;
-
-                const positions: number[] = [];
-                const normals: number[] = [];
-                const texcoords: number[] = [];
-
-                for (const vert of cluster.vertices) {
-                    const [px, py, pz] = convertCoord(vert.position);
-                    positions.push(px, py, pz);
-                    const [nx, ny, nz] = convertCoord(vert.normal);
-                    normals.push(nx, ny, nz);
-                    texcoords.push(vert.uv.x, vert.uv.y);
-                }
-
-                const posAccessor = doc.createAccessor()
-                    .setType('VEC3')
-                    .setArray(new Float32Array(positions))
-                    .setBuffer(buf);
-
-                const normAccessor = doc.createAccessor()
-                    .setType('VEC3')
-                    .setArray(new Float32Array(normals))
-                    .setBuffer(buf);
-
-                const uvAccessor = doc.createAccessor()
-                    .setType('VEC2')
-                    .setArray(new Float32Array(texcoords))
-                    .setBuffer(buf);
-
-                const indexAccessor = doc.createAccessor()
-                    .setType('SCALAR')
-                    .setArray(new Uint32Array(cluster.indices))
-                    .setBuffer(buf);
-
-                const prim = doc.createPrimitive()
-                    .setAttribute('POSITION', posAccessor)
-                    .setAttribute('NORMAL', normAccessor)
-                    .setAttribute('TEXCOORD_0', uvAccessor)
-                    .setIndices(indexAccessor);
-
-                const mat = materialMap.get(cluster.materialID);
-                if (mat) {
-                    prim.setMaterial(mat);
-                }
-
-                mesh.addPrimitive(prim);
+                mesh.addPrimitive(createPrimitive(cluster));
             }
 
             gNode.setMesh(mesh);
@@ -137,9 +143,58 @@ export async function exportGLB(
         }
     }
 
-    // Add root to scene
+    // Add worldspawn BVH root to scene.
     if (gltfNodes.length > 0) {
         scene.addChild(gltfNodes[0]!);
+    }
+
+    // Export non-worldspawn entities as first-class meshes/nodes.
+    const entityClusterMap = new Map<number, Cluster[]>();
+    for (const cluster of entityClusters) {
+        let list = entityClusterMap.get(cluster.entityIndex);
+        if (!list) {
+            list = [];
+            entityClusterMap.set(cluster.entityIndex, list);
+        }
+        list.push(cluster);
+    }
+
+    if (entityClusterMap.size > 0) {
+        const entitiesGroup = doc.createNode('entities');
+
+        for (const [entityIndex, clustersForEntity] of [...entityClusterMap.entries()].sort((a, b) => a[0] - b[0])) {
+            const entity = entities[entityIndex];
+            const classname = entity?.properties['classname'];
+            const targetname = entity?.properties['targetname'];
+            const baseName = classname ? `entity_${entityIndex}_${classname}` : `entity_${entityIndex}`;
+
+            const entityMesh = doc.createMesh(baseName);
+            for (const cluster of clustersForEntity) {
+                entityMesh.addPrimitive(createPrimitive(cluster));
+            }
+
+            const entityBounds = clustersForEntity
+                .map(cluster => cluster.bounds)
+                .reduce((merged, next) => mergeAABBs(merged, next));
+            const entityNode = doc.createNode(baseName)
+                .setMesh(entityMesh)
+                .setExtras({
+                    entityIndex,
+                    classname,
+                    targetname,
+                    aabb: convertAABB(entityBounds),
+                });
+
+            entityMesh.setExtras({
+                entityIndex,
+                classname,
+                targetname,
+            });
+
+            entitiesGroup.addChild(entityNode);
+        }
+
+        scene.addChild(entitiesGroup);
     }
 
     // Write GLB

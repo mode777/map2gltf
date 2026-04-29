@@ -141,6 +141,21 @@ describe('04-triangulation', () => {
         expect(diag.warnings.length).toBeGreaterThan(0);
     });
 
+    it('should use a configurable default texture size for UV fallback', () => {
+        const diag = createDiagnostics();
+        const poly = makePoly([
+            { x: 0, y: 0, z: 0 },
+            { x: 128, y: 0, z: 0 },
+            { x: 128, y: 128, z: 0 },
+        ], 'missing_tex');
+
+        const mesh = triangulate([poly], new Map(), diag, 128);
+
+        expect(mesh.vertices[1]!.uv.x).toBeCloseTo(1);
+        expect(mesh.vertices[2]!.uv.y).toBeCloseTo(-1);
+        expect(diag.warnings[0]?.message).toContain('128x128');
+    });
+
     it('should produce valid indices', () => {
         const poly = makePoly([
             { x: 0, y: 0, z: 0 },

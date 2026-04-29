@@ -1,4 +1,4 @@
-# Step 10 — Web Application
+# Feature 11 — Web Application
 
 [← Back to main spec](../spec.md)
 
@@ -8,8 +8,10 @@
 
 A single-page web application that allows users to convert Quake `.map` files to `.glb` entirely in the browser. Users load files via **drag-and-drop** or a **file input picker**, the compiler runs in a **Web Worker** to keep the UI responsive, and the resulting GLB is available for **download**, **3D preview**, and **visual inspection** (compilation stats, BVH tree viewer, cluster highlighting).
 
-**Input:** npm package library (`compile()` from [Step 9](09-npm-package.md))
+**Input:** npm package library (`compile()` from [Feature 9](09-npm-package.md))
 **Output:** Static single-page application (HTML + JS + CSS), deployable to any static host
+
+**Primary code file:** `web/src/main.ts`
 
 ---
 
@@ -146,6 +148,8 @@ type WorkerResponse =
 
 The GLB `Uint8Array` is transferred (not copied) via the `transfer` list in `postMessage` for zero-copy performance. The `stats` field is additive; consumers that only read `glb` are unaffected.
 
+For this feature set, `options` is expected to carry `skipWorldspawnClustering` from the checkbox state in the main thread. The checkbox label remains unchanged; only the option name and semantics changed.
+
 ### Worker Lifecycle
 
 A single worker instance is created on page load and reused for all compilations. If a compilation is already in progress and the user drops a new file, the pending compilation is **not** cancelled — the UI disables the drop zone until the current compilation completes. This avoids the complexity of worker termination and restart.
@@ -245,12 +249,14 @@ Panel visibility is toggled independently. The panels are always hidden when lea
 
 ### Compile Options
 
-The **Enable spatial clustering** checkbox (`#enable-clustering`) controls the `skipClustering` compiler option:
+The **Enable spatial clustering** checkbox (`#enable-clustering`) controls the `skipWorldspawnClustering` compiler option:
 
-- **Checked (default):** `skipClustering: false` — full spatial clustering is applied.
-- **Unchecked:** `skipClustering: true` — each material batch becomes a single cluster.
+- **Checked (default):** `skipWorldspawnClustering: false` — full worldspawn spatial clustering is applied.
+- **Unchecked:** `skipWorldspawnClustering: true` — only worldspawn spatial clustering is skipped; entity separation is preserved.
 
 The checkbox is **disabled** during compilation (`showCompiling`) and **re-enabled** on result or error (`showResult`/`showError`). The checkbox state is read when `handleFile()` runs, immediately before posting the message to the Web Worker.
+
+The unchecked path changes only worldspawn clustering behavior. It must not collapse non-worldspawn entities into shared export objects or otherwise remove entity identity from the resulting GLB.
 
 ### ui.ts
 
@@ -423,7 +429,7 @@ The panel appears in the result state alongside the download link and 3D preview
 
 ### Data Extraction
 
-The BVH hierarchy is already encoded in the GLB as the glTF node tree (see [Step 8](08-binary-export.md)). After three.js loads the GLB, the tree viewer traverses the loaded scene to build a UI tree:
+The BVH hierarchy is already encoded in the GLB as the glTF node tree (see [Feature 8](08-binary-export.md)). After three.js loads the GLB, the tree viewer traverses the loaded scene to build a UI tree:
 
 ```typescript
 interface BVHTreeNode {

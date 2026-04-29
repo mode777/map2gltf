@@ -1,4 +1,4 @@
-# Step 2 — Brush → Convex Face Polygons
+# Feature 2 — Brush → Convex Face Polygons
 
 [← Back to main spec](../spec.md)
 
@@ -8,8 +8,10 @@
 
 Convert each brush (defined as an intersection of half-planes) into a set of convex face polygons by clipping a seed polygon against all sibling planes.
 
-**Input:** `ParsedBrush` (from [Step 1](01-map-parsing.md))
+**Input:** `ParsedBrush` (from [Feature 1](01-map-parsing.md))
 **Output:** `ConvexPolygon[]` per brush
+
+**Primary code file:** `src/pipeline/02-brush-to-polygons.ts`
 
 ---
 
@@ -72,13 +74,13 @@ For a brush with *F* faces: O(F²) per brush (each of F seed polygons clipped ag
 
 ## Output Data Structure
 
-Each emitted polygon retains a reference to its originating `ParsedFace`, which carries the texture name and Valve 220 texture axes needed for UV computation in [Step 4](04-triangulation.md).
+Each emitted polygon retains a reference to its originating `ParsedFace`, which carries the texture name and Valve 220 texture axes needed for UV computation in [Feature 4](04-triangulation.md).
 
 ```typescript
 interface ConvexPolygon {
     vertices: Vec3[];       // CCW winding, length ≥ 3
     face: ParsedFace;       // originating face (for normal, texture axes, material)
-    brushIndex: number;     // index of the source brush (for CSG self-exclusion in Step 3)
+    brushIndex: number;     // index of the source brush (for CSG self-exclusion in Feature 3)
     entityIndex: number;    // 0 = worldspawn, 1+ = non-worldspawn entity index
 }
 ```
@@ -114,7 +116,7 @@ Process the wedge brush from `tests/fixtures/wedge.map`. Assert 5 polygons are e
 export function brushToPolygons(brush: ParsedBrush, brushIndex: number, entityIndex?: number): ConvexPolygon[]
 ```
 
-The `brushIndex` is assigned by the caller and stored on every emitted `ConvexPolygon` for use by Step 3 (CSG self-exclusion). The `entityIndex` defaults to 0 (worldspawn) and is propagated to every output polygon for use by Step 6 (clustering).
+The `brushIndex` is assigned by the caller and stored on every emitted `ConvexPolygon` for use by Feature 3 (CSG self-exclusion). The `entityIndex` defaults to 0 (worldspawn) and is propagated to every output polygon for use by Feature 6 (clustering).
 
 ### Algorithm (per brush)
 

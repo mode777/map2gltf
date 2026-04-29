@@ -327,29 +327,30 @@ describe('06-clustering', () => {
         expect(mat1.reduce((s, c) => s + c.indices.length / 3, 0)).toBe(10);
     });
 
-    // --- skipClustering tests ---
+    // --- skipWorldspawnClustering tests ---
 
-    it('skipClustering should produce one cluster per material batch', () => {
+    it('skipWorldspawnClustering should produce one worldspawn cluster per material batch', () => {
         const batch0 = makeBatch(0, 20, 0);
         const batch1 = makeBatch(1, 15, 100);
         const batch2 = makeBatch(2, 10, 200);
-        const clusters = clusterGeometry([batch0, batch1, batch2], { skipClustering: true });
+        const clusters = clusterGeometry([batch0, batch1, batch2], { skipWorldspawnClustering: true });
         expect(clusters).toHaveLength(3);
         expect(clusters[0]!.materialID).toBe(0);
         expect(clusters[1]!.materialID).toBe(1);
         expect(clusters[2]!.materialID).toBe(2);
+        expect(clusters.every(cluster => cluster.isWorldspawn)).toBe(true);
     });
 
-    it('skipClustering should preserve all triangles', () => {
+    it('skipWorldspawnClustering should preserve all triangles', () => {
         const batch = makeBatch(0, 100, 0);
-        const clusters = clusterGeometry([batch], { skipClustering: true });
+        const clusters = clusterGeometry([batch], { skipWorldspawnClustering: true });
         expect(clusters).toHaveLength(1);
         expect(clusters[0]!.indices.length / 3).toBe(100);
     });
 
-    it('skipClustering should still apply Forsyth reordering (valid permutation)', () => {
+    it('skipWorldspawnClustering should still apply Forsyth reordering (valid permutation)', () => {
         const batch = makeBatch(0, 30, 0);
-        const clusters = clusterGeometry([batch], { skipClustering: true });
+        const clusters = clusterGeometry([batch], { skipWorldspawnClustering: true });
         const cluster = clusters[0]!;
         // All indices should be valid
         for (const idx of cluster.indices) {
@@ -360,7 +361,7 @@ describe('06-clustering', () => {
         expect(cluster.indices.length / 3).toBe(30);
     });
 
-    it('skipClustering should ignore grid/splitting/merging options', () => {
+    it('skipWorldspawnClustering should ignore worldspawn grid/splitting/merging options', () => {
         // Spread geometry across many grid cells — normally produces multiple clusters
         const defs = [];
         for (let i = 0; i < 50; i++) {
@@ -368,12 +369,48 @@ describe('06-clustering', () => {
         }
         const batch = makeBatchWithMeta(0, defs);
         const clusters = clusterGeometry([batch], {
-            skipClustering: true,
+            skipWorldspawnClustering: true,
             gridCellSize: 16,
             maxClusterSize: 10,
             minClusterSize: 24,
         });
         expect(clusters).toHaveLength(1);
         expect(clusters[0]!.indices.length / 3).toBe(50);
+    });
+
+    it('skipWorldspawnClustering should preserve separate entity clusters for shared material', () => {
+        const batch = makeBatchWithMeta(0, [
+            ...Array.from({ length: 10 }, (_, i) => ({ x: i * 4, y: 0, entityIndex: 1, brushIndex: 1 })),
+            ...Array.from({ length: 12 }, (_, i) => ({ x: i * 4, y: 20, entityIndex: 2, brushIndex: 2 })),
+        ]);
+
+        const clusters = clusterGeometry([batch], { skipWorldspawnClustering: true });
+        expect(clusters).toHaveLength(2);
+        expect(new Set(clusters.map(cluster => cluster.entityIndex))).toEqual(new Set([1, 2]));
+        expect(clusters.every(cluster => !cluster.isWorldspawn)).toBe(true);
+    });
+
+    it('skipWorldspawnClustering should keep worldspawn and entities separated in mixed batches', () => {
+        const batch = makeBatchWithMeta(0, [
+            ...Array.from({ length: 10 }, (_, i) => ({ x: i * 100, y: 0, entityIndex: 0, brushIndex: i })),
+            ...Array.from({ length: 8 }, (_, i) => ({ x: i * 4, y: 20, entityIndex: 1, brushIndex: 100 })),
+            ...Array.from({ length: 8 }, (_, i) => ({ x: i * 4, y: 40, entityIndex: 2, brushIndex: 200 })),
+        ]);
+
+        const clusters = clusterGeometry([batch], { skipWorldspawnClustering: true });
+        expect(clusters).toHaveLength(3);
+
+        const worldCluster = clusters.find(cluster => cluster.isWorldspawn);
+        expect(worldCluster).toBeDefined();
+        expect(worldCluster!.entityIndex).toBe(0);
+        expect(worldCluster!.triangleIndices.every(index => batch.triangleEntityIndices[index] === 0)).toBe(true);
+
+        const entityClusters = clusters.filter(cluster => !cluster.isWorldspawn);
+        expect(entityClusters).toHaveLength(2);
+        for (const cluster of entityClusters) {
+            const entityIndices = new Set(cluster.triangleIndices.map(index => batch.triangleEntityIndices[index]));
+            expect(entityIndices.size).toBe(1);
+            expect(entityIndices.has(0)).toBe(false);
+        }
     });
 });

@@ -1,4 +1,4 @@
-# Step 7 — BVH Construction
+# Feature 7 — BVH Construction
 
 [← Back to main spec](../spec.md)
 
@@ -6,12 +6,14 @@
 
 ## Overview
 
-Build a bounding volume hierarchy over clusters to provide a spatial acceleration structure for frustum culling.
+Build a bounding volume hierarchy over **worldspawn clusters** to provide a spatial acceleration structure for frustum culling of static geometry.
 
-> **Note:** When `skipClustering` is enabled, the cluster count equals the material count. For typical maps with ≤ 4 materials this falls at or below the BVH leaf threshold, producing a single leaf node wrapping all clusters.
+Non-worldspawn entities are exported independently in Feature 8 and are not folded into the worldspawn BVH.
 
-**Input:** `Cluster[]` (from [Step 6](06-clustering.md))
+**Input:** Worldspawn `Cluster[]` (from [Feature 6](06-clustering.md))
 **Output:** `BVHNode[]` (flat array, depth-first order)
+
+**Primary code file:** `src/pipeline/07-bvh-construction.ts`
 
 ---
 
@@ -31,11 +33,11 @@ interface BVHNode {
 
 ## Build Algorithm (SAH)
 
-> **Implementation note:** `BVH_LEAF_THRESHOLD` (4) and `SAH_CANDIDATES` (12) are hardcoded constants in the implementation rather than read from `CompileOptions`.
+> **Implementation note:** The leaf threshold is configurable through `buildBVH(clusters, { leafThreshold })`. `SAH_CANDIDATES` (12) remains a hardcoded constant in the current implementation.
 
 The BVH is built top-down using the **Surface Area Heuristic**:
 
-1. **Leaf threshold:** if the current set contains ≤ 4 clusters, create a leaf node.
+1. **Leaf threshold:** if the current set contains ≤ `leafThreshold` clusters, create a leaf node. The default threshold is 4.
 2. **Split candidate evaluation:** for each of the 3 axes, evaluate *K* = 12 uniformly spaced split planes across the cluster centroids' extent on that axis.
 3. **SAH cost:** for each candidate split, compute cost = SA(left) × count(left) + SA(right) × count(right), where SA is the surface area of the child AABB.
 4. **Select** the split with the lowest cost across all 3 axes.
@@ -67,7 +69,8 @@ const clusters: Cluster[];   // ordered so that each leaf's clusters are contigu
 5. **Depth-first layout:** Assert that for every interior node at index *i*, the left child is at index *i* + 1, and the right child index stored in `right` is a valid index > *i* + 1.
 6. **Cluster coverage:** Collect all `(firstCluster, clusterCount)` ranges from leaf nodes. Assert they are non-overlapping and their union covers all input clusters exactly once.
 7. **SAH cost validity:** After building, compute the total SAH cost and assert it is ≤ the cost of a single leaf containing all clusters (i.e. the tree actually improves or equals naive cost).
-8. **Leaf threshold:** Assert no leaf node has `clusterCount` > 4 (the configured threshold), unless no beneficial split was found.
+8. **Leaf threshold:** Assert no leaf node has `clusterCount` greater than the configured `leafThreshold`, unless no beneficial split was found.
+9. **No option-driven collapse:** Assert the BVH shape depends on the actual worldspawn clusters provided and is not forced to a single leaf solely because worldspawn clustering was skipped upstream.
 
 ### Integration Smoke Test
 
@@ -81,21 +84,26 @@ Build a BVH from 100+ clusters (from `tests/fixtures/large-map.map`). Implement 
 
 ```typescript
 // pipeline/07-bvh-construction.ts
-export function buildBVH(clusters: Cluster[]): BVHNode[]
+interface BVHOptions {
+    leafThreshold?: number;
+}
+
+export function buildBVH(clusters: Cluster[], options?: BVHOptions): BVHNode[]
 ```
 
 ### Algorithm (Top-Down SAH Build)
 
 ```typescript
-function buildBVH(clusters: Cluster[]): BVHNode[] {
+function buildBVH(clusters: Cluster[], options?: BVHOptions): BVHNode[] {
     const nodes: BVHNode[] = [];
+    const leafThreshold = options?.leafThreshold ?? 4;
 
     function build(clusterIndices: number[]): number {
         const nodeIndex = nodes.length;
         const bounds = mergeAABBs(clusterIndices.map(i => clusters[i]!.bounds));
 
         // Leaf case
-        if (clusterIndices.length <= BVH_LEAF_THRESHOLD) {
+        if (clusterIndices.length <= leafThreshold) {
             nodes.push({
                 bounds,
                 left: -1,
@@ -172,6 +180,6 @@ function surfaceArea(aabb: AABB): number {
 ### Cluster Reordering
 
 After the tree is built, reorder the `clusters` array so that each leaf’s clusters are contiguous (matching `firstCluster` + `clusterCount`). This is done by collecting leaf ranges during the build and rearranging the cluster array in a single pass.
-> **Implementation note — cluster reordering not performed:** Because clusters store independent vertex/index buffers (see Step 6), the clusters array is **not** physically reordered. The BVH references cluster indices into the original array, which is valid since each cluster is self-contained. The `orderedClusters` tracking is computed during the build but the original array is left as-is.
+> **Implementation note — cluster reordering not performed:** Because clusters store independent vertex/index buffers (see Feature 6), the clusters array is **not** physically reordered. The BVH references cluster indices into the original array, which is valid since each cluster is self-contained. The `orderedClusters` tracking is computed during the build but the original array is left as-is.
 
 > **Implementation note — empty clusters:** If `clusters` is empty, a single degenerate leaf node with zero-volume AABB is returned to ensure the BVH always has at least one node.

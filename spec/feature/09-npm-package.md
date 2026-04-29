@@ -1,4 +1,4 @@
-# Step 9 — npm Package
+# Feature 9 — npm Package
 
 [← Back to main spec](../spec.md)
 
@@ -6,10 +6,12 @@
 
 ## Overview
 
-Package the compiler as a publishable **npm library** that exposes the `compile()` function as its public API, alongside a CLI binary for command-line usage. The package is the primary distribution artefact for Node.js consumers and serves as the foundation for the web application (Step 10).
+Package the compiler as a publishable **npm library** that exposes the `compile()` function as its public API. The package is the primary distribution artefact for Node.js and bundler consumers and serves as the foundation for the CLI interface (Feature 10) and the web application (Feature 11).
 
-**Input:** Compiled TypeScript source (Steps 1–8)
-**Output:** Publishable npm package with library entry point, TypeScript declarations, and CLI binary
+**Input:** Compiled TypeScript source (Features 1–8)
+**Output:** Publishable npm package with library entry point, TypeScript declarations, and package metadata
+
+**Primary code file:** `package.json`
 
 ---
 
@@ -56,7 +58,9 @@ fs.writeFileSync('level.glb', glb);
 }
 ```
 
-Only the top-level `compile()` function and the `CompileOptions` / `Diagnostics` types are part of the public API. Internal pipeline steps, math utilities, and types are implementation details and are **not** exported from the package entry point.
+Only the top-level `compile()` function and the `CompileOptions` / `Diagnostics` types are part of the public API. Internal pipeline features, math utilities, and types are implementation details and are **not** exported from the package entry point.
+
+The package manifest also exposes the CLI binary via its `bin` field, but the CLI behavior itself is specified separately in [Feature 10](10-cli-interface.md).
 
 ### Public API Surface
 
@@ -73,37 +77,9 @@ export interface Diagnostics { /* as defined in spec.md */ }
 export interface DiagnosticMessage { /* as defined in spec.md */ }
 ```
 
-> **Implementation note — async API:** Both `compile()` and `compileWithDiagnostics()` are `async` functions returning Promises. This is because the GLB export step uses `@gltf-transform/core`'s async `writeBinary()`. All callers must `await` the result.
+> **Implementation note — async API:** Both `compile()` and `compileWithDiagnostics()` are `async` functions returning Promises. This is because the GLB export feature uses `@gltf-transform/core`'s async `writeBinary()`. All callers must `await` the result.
 
 The `compile()` function applies default values for all omitted `CompileOptions` fields. The `compileWithDiagnostics()` variant returns both the GLB output and accumulated warnings/errors.
-
-### CLI Binary
-
-```jsonc
-{
-    "bin": {
-        "map2gltf": "dist/index.js"
-    }
-}
-```
-
-The CLI entry point (`src/index.ts`) parses command-line arguments, reads the `.map` file from disk, calls `compile()`, and writes the `.glb` file. It is a thin wrapper — all logic lives in the library.
-
-```
-Usage: map2gltf <input.map> [options]
-
-Options:
-  -o, --output <file>      Output .glb path (default: <input>.glb)
-  --default-texture-size    Default texture dimensions (default: 64)
-  --grid-cell-size          Clustering grid cell size (default: 16)
-  --max-cluster-size        Max triangles per cluster (default: 512)
-  --min-cluster-size        Min triangles per cluster (default: 8)
-  --bvh-leaf-threshold      BVH leaf cluster threshold (default: 4)
-  -v, --verbose             Print diagnostics to stderr
-  -h, --help                Show help
-```
-
----
 
 ## Published Files
 
@@ -131,9 +107,9 @@ The build emits `.d.ts` and `.d.ts.map` files (enabled by `declaration` and `dec
 
 ## Browser Compatibility
 
-The core library (`compiler.ts` and all pipeline steps) does **not** use Node.js-specific APIs (`fs`, `path`, `process`, `Buffer`, etc.) in its compilation logic. The `compile()` function accepts a `string` and returns a `Uint8Array` — both are platform-neutral types. This makes the library directly importable in browser bundles (as used by Step 10's Web Worker).
+The core library (`compiler.ts` and all pipeline features) does **not** use Node.js-specific APIs (`fs`, `path`, `process`, `Buffer`, etc.) in its compilation logic. The `compile()` function accepts a `string` and returns a `Uint8Array` — both are platform-neutral types. This makes the library directly importable in browser bundles (as used by Feature 11's Web Worker).
 
-The only Node.js dependency is in `src/index.ts` (the CLI entry point), which uses `fs` and `process.argv`. This file is excluded from browser builds.
+The only Node.js dependency is in `src/index.ts` (the CLI entry point described in [Feature 10](10-cli-interface.md)), which uses `fs` and `process.argv`. This file is excluded from browser builds.
 
 ---
 
@@ -171,4 +147,4 @@ The `prepublishOnly` script ensures a fresh build before every `npm publish`:
 
 ### Integration Test
 
-Import `compile` from the package entry point (using the `exports` map), compile `tests/fixtures/hollow-room.map`, and assert the output is a valid GLB with the expected structure (as verified in the Step 8 integration tests).
+Import `compile` from the package entry point (using the `exports` map), compile `tests/fixtures/hollow-room.map`, and assert the output is a valid GLB with the expected structure (as verified in the Feature 8 integration tests).

@@ -1,15 +1,16 @@
 # Brush/CSG Map Compiler — Technical Specification
 
 **Input:** Quake `.map` file (Standard format or Valve 220 format, as exported by TrenchBroom)
-**Output:** Clustered static geometry + BVH in a `.glb` file (glTF 2.0 Binary)
+**Output:** Clustered worldspawn geometry + BVH, plus entity-identifiable meshes in a `.glb` file (glTF 2.0 Binary)
 **Implementation language:** TypeScript
 
 **Output Artefacts:**
 
 | Artefact | Description |
 |----------|-------------|
-| **npm package** (`map2gltf`) | Publishable library exposing the `compile()` API and CLI binary. Consumable from any Node.js or bundler-based project. See [Step 9](steps/09-npm-package.md). |
-| **Web application** (`web/`) | Single-page app that accepts `.map` files via drag-and-drop or file picker, compiles them in-browser, and offers the resulting `.glb` for download / 3D preview. See [Step 10](steps/10-web-application.md). |
+| **npm package** (`map2gltf`) | Publishable library exposing the `compile()` API and package metadata for downstream consumers. See [Feature 9](feature/09-npm-package.md). |
+| **CLI application** (`map2gltf`) | Node.js command-line interface for converting `.map` files to `.glb` from the terminal. See [Feature 10](feature/10-cli-interface.md). |
+| **Web application** (`web/`) | Single-page app that accepts `.map` files via drag-and-drop or file picker, compiles them in-browser, and offers the resulting `.glb` for download / 3D preview. See [Feature 11](feature/11-web-application.md). |
 
 ---
 
@@ -18,8 +19,10 @@
 * Fast CPU frustum culling via BVH over geometry clusters
 * Low draw call count through material batching and cluster merging
 * Standard glTF 2.0 output (inspectable in Blender, VS Code, three.js)
+* Exported non-worldspawn entities remain independently identifiable in the GLB
 * Correct texture-mapped geometry derived from the Valve 220 texture axes (standard Quake format also supported with auto-derived axes)
-* Reusable npm package consumable as both a library and a CLI tool
+* Reusable npm package consumable as a library in Node.js and browser bundlers
+* Node.js CLI for command-line `.map` → `.glb` conversion
 * Browser-based web application for interactive `.map` → `.glb` conversion
 
 ### Non-goals
@@ -44,44 +47,47 @@ flowchart TD
     F --> G["BVH Construction"]
     G --> H["glTF/GLB Export"]
     H --> I["npm Package"]
-    H --> J["Web Application"]
+    I --> J["CLI Interface"]
+    I --> K["Web Application"]
 
-    click A "steps/01-map-parsing.md" "Map Parsing"
-    click B "steps/02-brush-to-polygons.md" "Brush to Polygons"
-    click C "steps/03-world-csg.md" "World CSG"
-    click D "steps/04-triangulation.md" "Triangulation & UVs"
-    click E "steps/05-material-merge.md" "Material Merge"
-    click F "steps/06-clustering.md" "Clustering"
-    click G "steps/07-bvh-construction.md" "BVH Construction"
-    click H "steps/08-binary-export.md" "Binary Export"
-    click I "steps/09-npm-package.md" "npm Package"
-    click J "steps/10-web-application.md" "Web Application"
+    click A "feature/01-map-parsing.md" "Map Parsing"
+    click B "feature/02-brush-to-polygons.md" "Brush to Polygons"
+    click C "feature/03-world-csg.md" "World CSG"
+    click D "feature/04-triangulation.md" "Triangulation & UVs"
+    click E "feature/05-material-merge.md" "Material Merge"
+    click F "feature/06-clustering.md" "Clustering"
+    click G "feature/07-bvh-construction.md" "BVH Construction"
+    click H "feature/08-binary-export.md" "Binary Export"
+    click I "feature/09-npm-package.md" "npm Package"
+    click J "feature/10-cli-interface.md" "CLI Interface"
+    click K "feature/11-web-application.md" "Web Application"
 ```
 
-Steps 1–8 form the core compilation pipeline. Steps 9–10 define the distribution artefacts that wrap the pipeline for consumption as a library/CLI and as a browser application respectively. All compilation processing is offline; there are no real-time constraints on the compiler itself.
+Features 1–8 form the core compilation pipeline. Features 9–11 define the distribution artefacts that wrap the pipeline for consumption as a library, as a CLI, and as a browser application respectively. All compilation processing is offline; there are no real-time constraints on the compiler itself.
 
 ---
 
-## Pipeline Steps
+## Pipeline Features
 
-| Step | Document | Input | Output |
+| Feature | Document | Input | Output |
 |------|----------|-------|--------|
-| 1 | [Map Parsing](steps/01-map-parsing.md) | `.map` file (Standard or Valve 220 text) | `ParsedEntity[]` |
-| 2 | [Brush → Polygons](steps/02-brush-to-polygons.md) | `ParsedBrush` | `ConvexPolygon[]` per brush |
-| 3 | [World CSG](steps/03-world-csg.md) | All `ConvexPolygon[]` | Clipped `ConvexPolygon[]` (no hidden faces) |
-| 4 | [Triangulation & UVs](steps/04-triangulation.md) | `ConvexPolygon[]`, `textureSizes` | `TriangulatedMesh` (vertices, indices, per-triangle material) |
-| 5 | [Material Merge](steps/05-material-merge.md) | `TriangulatedMesh` | `MaterialBatch[]` |
-| 6 | [Clustering](steps/06-clustering.md) | `MaterialBatch[]` | `Cluster[]` |
-| 7 | [BVH Construction](steps/07-bvh-construction.md) | `Cluster[]` | `BVHNode[]` |
-| 8 | [glTF/GLB Export](steps/08-binary-export.md) | All compiled data | `.glb` file (glTF 2.0 Binary) |
-| 9 | [npm Package](steps/09-npm-package.md) | Compiled source | Publishable npm package (library + CLI) |
-| 10 | [Web Application](steps/10-web-application.md) | npm package (library) | Single-page web app for in-browser conversion, BVH tree viewer, cluster highlighting, metadata panel |
+| 1 | [Map Parsing](feature/01-map-parsing.md) | `.map` file (Standard or Valve 220 text) | `ParsedEntity[]` |
+| 2 | [Brush → Polygons](feature/02-brush-to-polygons.md) | `ParsedBrush` | `ConvexPolygon[]` per brush |
+| 3 | [World CSG](feature/03-world-csg.md) | All `ConvexPolygon[]` | Clipped `ConvexPolygon[]` (no hidden faces) |
+| 4 | [Triangulation & UVs](feature/04-triangulation.md) | `ConvexPolygon[]`, `textureSizes` | `TriangulatedMesh` (vertices, indices, per-triangle material) |
+| 5 | [Material Merge](feature/05-material-merge.md) | `TriangulatedMesh` | `MaterialBatch[]` |
+| 6 | [Clustering](feature/06-clustering.md) | `MaterialBatch[]` | `Cluster[]` |
+| 7 | [BVH Construction](feature/07-bvh-construction.md) | Worldspawn `Cluster[]` | `BVHNode[]` |
+| 8 | [glTF/GLB Export](feature/08-binary-export.md) | Worldspawn BVH + world/entity clusters | `.glb` file (glTF 2.0 Binary) |
+| 9 | [npm Package](feature/09-npm-package.md) | Compiled source | Publishable npm package (library distribution + package metadata) |
+| 10 | [CLI Interface](feature/10-cli-interface.md) | npm package CLI entry point + `.map` path + CLI flags | `.glb` file on disk + terminal diagnostics |
+| 11 | [Web Application](feature/11-web-application.md) | npm package (library) | Single-page web app for in-browser conversion, BVH tree viewer, cluster highlighting, metadata panel |
 
 ---
 
 ## Shared Types
 
-These interfaces are used across multiple pipeline steps.
+These interfaces are used across multiple pipeline features.
 
 ```typescript
 interface Vec2 {
@@ -116,7 +122,9 @@ interface AABB {
 | Min cluster size       | 8 triangles        |
 | BVH leaf threshold     | 4 clusters         |
 | SAH split candidates   | 12 per axis        |
-| Skip clustering        | `false`            |
+| Skip worldspawn clustering | `false`       |
+
+`skipWorldspawnClustering` bypasses only **worldspawn** spatial clustering. Non-worldspawn entity geometry remains partitioned one cluster per entity per material batch, and the exported GLB still preserves those entities as independently identifiable meshes/nodes.
 
 ---
 
@@ -124,7 +132,7 @@ interface AABB {
 
 | Texture | Behaviour |
 |---------|-----------|
-| `clip`  | Brush participates in CSG but no visible geometry is generated. Polygons with this texture are filtered out after CSG (Step 3) and before triangulation (Step 4). |
+| `clip`  | Brush participates in CSG but no visible geometry is generated. Polygons with this texture are filtered out after CSG (Feature 3) and before triangulation (Feature 4). |
 
 ---
 
@@ -194,7 +202,7 @@ interface AABB {
 │       └── drop-zone.test.ts     # File input & drag-and-drop unit tests
 ├── spec/
 │   ├── spec.md                   # This specification document
-│   └── steps/
+│   └── feature/
 │       ├── 01-map-parsing.md
 │       ├── 02-brush-to-polygons.md
 │       ├── 03-world-csg.md
@@ -204,7 +212,8 @@ interface AABB {
 │       ├── 07-bvh-construction.md
 │       ├── 08-binary-export.md
 │       ├── 09-npm-package.md
-│       └── 10-web-application.md
+│       ├── 10-cli-interface.md
+│       └── 11-web-application.md
 ├── tsconfig.json
 ├── package.json
 └── README.md
@@ -289,7 +298,7 @@ The project uses **tsx** for development (zero-config TypeScript execution) and 
 
 | Package | Purpose | Type |
 |---------|---------|------|
-| `@gltf-transform/core` | GLB/glTF construction in Step 8 | runtime |
+| `@gltf-transform/core` | GLB/glTF construction in Feature 8 | runtime |
 | `tsx` | TypeScript execution during development | dev |
 | `vitest` | Test runner | dev |
 | `eslint` | Linting | dev |
@@ -300,7 +309,7 @@ The project uses **tsx** for development (zero-config TypeScript execution) and 
 | `three` | 3D preview renderer in the web application | dev (web) |
 | `@types/three` | TypeScript types for three.js | dev (web) |
 
-No other runtime dependencies for the core library. All math utilities (`vec3`, `plane`, `aabb`) and pipeline steps are implemented from scratch — no external geometry or CSG libraries. The web application adds `three` (loaded client-side only) and `vite` as a build tool.
+No other runtime dependencies for the core library. All math utilities (`vec3`, `plane`, `aabb`) and pipeline features are implemented from scratch — no external geometry or CSG libraries. The web application adds `three` (loaded client-side only) and `vite` as a build tool.
 
 ---
 
@@ -308,7 +317,7 @@ No other runtime dependencies for the core library. All math utilities (`vec3`, 
 
 ### Pipeline Orchestrator
 
-The compiler is structured as a linear pipeline of pure transformation functions. Each step is a single exported function with an explicit input → output signature and no shared mutable state.
+The compiler is structured as a linear pipeline of pure transformation functions. Each feature is a single exported function with an explicit input → output signature and no shared mutable state.
 
 ```typescript
 // compiler.ts — top-level orchestration
@@ -341,30 +350,44 @@ export async function compile(mapSource: string, options: CompileOptions): Promi
     });
 
     const allPolygons = [...clipped, ...entityPolys];
+    const visiblePolygons = allPolygons.filter(p => p.face.textureName !== 'clip');
 
     // Handle empty map: produce a minimal valid GLB
-    if (allPolygons.length === 0) {
-        return exportGLB([], [], [{ bounds: { min: {x:0,y:0,z:0}, max: {x:0,y:0,z:0} }, left: -1, right: -1, firstCluster: 0, clusterCount: 0 }]);
+    if (visiblePolygons.length === 0) {
+        return exportGLB(
+            [],
+            [],
+            [{ bounds: { min: {x:0,y:0,z:0}, max: {x:0,y:0,z:0} }, left: -1, right: -1, firstCluster: 0, clusterCount: 0 }],
+            [],
+            entities,
+        );
     }
 
-    const mesh        = triangulate(allPolygons, options.textureSizes);
+    const mesh        = triangulate(visiblePolygons, options.textureSizes);
     const batches     = mergeMaterials(mesh);
-    const clusters    = clusterGeometry(batches);
-    const bvh         = buildBVH(clusters);
-    const glb         = await exportGLB(batches, clusters, bvh);
+    const clusters    = clusterGeometry(batches, {
+        gridCellSize: options.gridCellSize,
+        maxClusterSize: options.maxClusterSize,
+        minClusterSize: options.minClusterSize,
+        skipWorldspawnClustering: options.skipWorldspawnClustering,
+    });
+    const worldClusters = clusters.filter(cluster => cluster.isWorldspawn);
+    const entityClusters = clusters.filter(cluster => !cluster.isWorldspawn);
+    const bvh         = buildBVH(worldClusters);
+    const glb         = await exportGLB(batches, worldClusters, bvh, entityClusters, entities);
     return glb;
 }
 ```
 
 > **Implementation note — async API:** The `compile()` and `compileWithDiagnostics()` functions are `async` and return `Promise<Uint8Array>` / `Promise<{glb, diagnostics}>` respectively. This is because `exportGLB()` uses `@gltf-transform/core`'s `NodeIO.writeBinary()` which is async. Callers must `await` the result.
 >
-> **Implementation note — empty maps:** If the parsed map produces zero polygons (empty or entity-only file), the compiler returns a minimal valid GLB containing an empty root node rather than throwing.
+> **Implementation note — empty maps:** If the parsed map produces zero visible polygons, the compiler returns a minimal valid GLB with a degenerate worldspawn BVH leaf and no entity branch rather than throwing.
 >
-> **Implementation note — multi-entity handling:** Only entity 0 (worldspawn) brushes participate in CSG. Other entities (func_wall, func_door, etc.) are passed through to triangulation without CSG, preserving their full geometry.
+> **Implementation note — multi-entity handling:** Only entity 0 (worldspawn) brushes participate in CSG. Other entities (func_wall, func_door, etc.) are passed through to triangulation without CSG, remain separate during clustering, and are exported as their own scene objects in the GLB.
 
 ### Design Principles
 
-1. **Pure functions.** Each pipeline step is a pure function: it takes immutable input and returns new output. No step mutates its input data. This makes every step independently testable and composable.
+1. **Pure functions.** Each pipeline feature is a pure function: it takes immutable input and returns new output. No feature mutates its input data. This makes every feature independently testable and composable.
 
 2. **Explicit data flow.** Data is passed via function arguments and return values — never through module-level singletons, global state, or event buses. The orchestrator is the single place where the full data flow is visible.
 
@@ -406,7 +429,7 @@ export async function compile(mapSource: string, options: CompileOptions): Promi
     const DEFAULT_OPTIONS: CompileOptions = { /* all defaults as listed above */ };
     ```
 
-    > **Implementation note — hardcoded parameters:** In the current implementation, pipeline steps (02 through 07) use hardcoded constants for epsilon, seed extent, grid cell size, cluster limits, BVH thresholds, and SAH candidates rather than reading from `CompileOptions`. The `CompileOptions` interface is defined and accepted by `compile()`, but only `textureSizes` is actively threaded through to the pipeline. The remaining parameters serve as documentation of the chosen values and as API surface for future configurability.
+    > **Implementation note — hardcoded parameters:** In the current implementation, pipeline features (02 through 07) use hardcoded constants for epsilon, seed extent, grid cell size, cluster limits, BVH thresholds, and SAH candidates rather than reading from `CompileOptions`. The `CompileOptions` interface is defined and accepted by `compile()`, but only `textureSizes` is actively threaded through to the pipeline. The remaining parameters serve as documentation of the chosen values and as API surface for future configurability.
 
 5. **No class hierarchies.** The codebase uses plain interfaces and functions. Geometry types (`Vec3`, `ConvexPolygon`, `Vertex`, etc.) are plain objects — no classes with methods, no inheritance. Utility operations are standalone functions in the `math/` module.
 
@@ -446,7 +469,7 @@ flowchart LR
     S8 --> GLTF["@gltf-transform/core"]
 ```
 
-Dependencies flow strictly downward: pipeline steps depend on `types` and `math`, never on each other. The only external runtime dependency for the core library is `@gltf-transform/core` used exclusively by Step 8. The web application adds `three` for the 3D preview and consumes the core `compile()` function via a Web Worker.
+Dependencies flow strictly downward: pipeline features depend on `types` and `math`, never on each other. The only external runtime dependency for the core library is `@gltf-transform/core` used exclusively by Feature 8. The web application adds `three` for the 3D preview and consumes the core `compile()` function via a Web Worker.
 
 ---
 
@@ -489,13 +512,13 @@ flowchart BT
 
 #### 1. Unit Tests — `tests/unit/`
 
-One test file per pipeline step and per math module. Each step's tests are specified in its own step document (see [Step 1](steps/01-map-parsing.md) through [Step 10](steps/10-web-application.md)).
+One test file per pipeline feature and per math module. Each feature's tests are specified in its own feature document (see [Feature 1](feature/01-map-parsing.md) through [Feature 11](feature/11-web-application.md)).
 
-**Scope:** Single function, single step. All inputs are constructed in-memory — no file I/O. Dependencies on prior steps are satisfied by hand-crafted fixture data, not by running the actual pipeline.
+**Scope:** Single function, single feature. All inputs are constructed in-memory — no file I/O. Dependencies on prior features are satisfied by hand-crafted fixture data, not by running the actual pipeline.
 
 **Naming convention:** `describe('stepName')` → `it('should …')`. Test names describe the invariant being checked, not the implementation detail.
 
-**Math module tests** (`tests/unit/math/`) cover foundational operations that every step relies on:
+**Math module tests** (`tests/unit/math/`) cover foundational operations that every feature relies on:
 
 | Module | Key tests |
 |--------|-----------|
@@ -526,14 +549,14 @@ Test fixtures are committed `.map` files stored in `tests/fixtures/`. They are t
 
 | Fixture | Description | Primary use |
 |---------|-------------|-------------|
-| `box.map` | Single axis-aligned box brush | Step 1–2 unit tests, minimal pipeline smoke test |
-| `two-boxes.map` | Two touching boxes sharing a face | Step 3 CSG verification |
-| `wedge.map` | Triangular prism brush | Step 2 non-quad polygon test |
-| `hollow-room.map` | Hollow box room (6 brushes: floor, ceiling, 4 walls) | Integration: Box room test, Step 5 smoke test (2 textures: floor + walls) |
+| `box.map` | Single axis-aligned box brush | Feature 1–2 unit tests, minimal pipeline smoke test |
+| `two-boxes.map` | Two touching boxes sharing a face | Feature 3 CSG verification |
+| `wedge.map` | Triangular prism brush | Feature 2 non-quad polygon test |
+| `hollow-room.map` | Hollow box room (6 brushes: floor, ceiling, 4 walls) | Integration: Box room test, Feature 5 smoke test (2 textures: floor + walls) |
 | `two-rooms.map` | Two rooms connected by a doorway | Integration: multi-brush CSG + clustering |
-| `textured-room.map` | Room with 3+ distinct textures | Step 4–5 UV + material merge verification, Integration: Multi-material |
-| `room-with-pillar.map` | Room (6 brushes) with a pillar brush in the center | Step 3 CSG smoke test |
-| `large-map.map` | Complex map with 50+ brushes (multi-room, corridors, pillars) | Integration: Large map test, Step 6–7 smoke tests |
+| `textured-room.map` | Room with 3+ distinct textures | Feature 4–5 UV + material merge verification, Integration: Multi-material |
+| `room-with-pillar.map` | Room (6 brushes) with a pillar brush in the center | Feature 3 CSG smoke test |
+| `large-map.map` | Complex map with 50+ brushes (multi-room, corridors, pillars) | Integration: Large map test, Feature 6–7 smoke tests |
 
 ### Running Tests
 
@@ -547,7 +570,7 @@ npm run test:watch
 # Coverage report
 npm run test:coverage
 
-# Run a single step's tests
+# Run a single feature's tests
 npx vitest run tests/unit/04-triangulation.test.ts
 ```
 

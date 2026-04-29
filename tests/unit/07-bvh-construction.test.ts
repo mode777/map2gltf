@@ -26,6 +26,8 @@ function makeCluster(
             { position: { x: maxX, y: maxY, z: maxZ }, normal: { x: 0, y: 0, z: 1 }, uv: { x: 1, y: 1 } },
         ],
         indices: [0, 1, 2],
+        entityIndex: 0,
+        isWorldspawn: true,
     };
 }
 
@@ -158,15 +160,47 @@ describe('07-bvh-construction', () => {
         expect(bvh[0]!.clusterCount).toBe(4);
     });
 
-    it('skipClustering should force a single leaf even with many clusters', () => {
+    it('should allow the leaf threshold to keep six clusters in a single leaf', () => {
+        const clusters = [
+            makeCluster(0, 0, 0, 0, 10, 10, 10),
+            makeCluster(1, 20, 0, 0, 30, 10, 10),
+            makeCluster(2, 40, 0, 0, 50, 10, 10),
+            makeCluster(3, 60, 0, 0, 70, 10, 10),
+            makeCluster(4, 80, 0, 0, 90, 10, 10),
+            makeCluster(5, 100, 0, 0, 110, 10, 10),
+        ];
+
+        const bvh = buildBVH(clusters, { leafThreshold: 8 });
+
+        expect(bvh).toHaveLength(1);
+        expect(bvh[0]!.left).toBe(-1);
+        expect(bvh[0]!.clusterCount).toBe(6);
+    });
+
+    it('should allow the leaf threshold to force a split for six clusters', () => {
+        const clusters = [
+            makeCluster(0, 0, 0, 0, 10, 10, 10),
+            makeCluster(1, 20, 0, 0, 30, 10, 10),
+            makeCluster(2, 40, 0, 0, 50, 10, 10),
+            makeCluster(3, 60, 0, 0, 70, 10, 10),
+            makeCluster(4, 80, 0, 0, 90, 10, 10),
+            makeCluster(5, 100, 0, 0, 110, 10, 10),
+        ];
+
+        const bvh = buildBVH(clusters, { leafThreshold: 2 });
+
+        expect(bvh.length).toBeGreaterThan(1);
+        expect(bvh[0]!.left).not.toBe(-1);
+    });
+
+    it('should not force a single leaf for many clusters after option rename', () => {
         const clusters: Cluster[] = [];
         for (let i = 0; i < 10; i++) {
             clusters.push(makeCluster(i, i * 10, 0, 0, i * 10 + 5, 5, 5));
         }
-        const bvh = buildBVH(clusters, { skipClustering: true });
-        expect(bvh).toHaveLength(1);
-        expect(bvh[0]!.left).toBe(-1);
-        expect(bvh[0]!.clusterCount).toBe(10);
+        const bvh = buildBVH(clusters);
+        expect(bvh.length).toBeGreaterThan(1);
+        expect(bvh[0]!.left).not.toBe(-1);
     });
 });
 

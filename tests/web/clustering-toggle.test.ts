@@ -17,19 +17,19 @@ describe('clustering toggle', () => {
         document.body.appendChild(checkbox);
     });
 
-    function readSkipClustering(): boolean {
+    function readSkipWorldspawnClustering(): boolean {
         const cb = document.getElementById('enable-clustering') as HTMLInputElement;
         return !cb.checked;
     }
 
-    it('should return skipClustering=false when checkbox is checked', () => {
+    it('should return skipWorldspawnClustering=false when checkbox is checked', () => {
         checkbox.checked = true;
-        expect(readSkipClustering()).toBe(false);
+        expect(readSkipWorldspawnClustering()).toBe(false);
     });
 
-    it('should return skipClustering=true when checkbox is unchecked', () => {
+    it('should return skipWorldspawnClustering=true when checkbox is unchecked', () => {
         checkbox.checked = false;
-        expect(readSkipClustering()).toBe(true);
+        expect(readSkipWorldspawnClustering()).toBe(true);
     });
 
     it('checkbox should be disabled during compilation', () => {

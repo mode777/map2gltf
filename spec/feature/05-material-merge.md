@@ -1,4 +1,4 @@
-# Step 5 — Material Merge
+# Feature 5 — Material Merge
 
 [← Back to main spec](../spec.md)
 
@@ -8,8 +8,10 @@
 
 Group all triangles by material and build deduplicated per-material vertex and index buffers.
 
-**Input:** `TriangulatedMesh` (from [Step 4](04-triangulation.md))
+**Input:** `TriangulatedMesh` (from [Feature 4](04-triangulation.md))
 **Output:** `MaterialBatch[]`
+
+**Primary code file:** `src/pipeline/05-material-merge.ts`
 
 ---
 
@@ -30,7 +32,7 @@ interface MaterialBatch {
 }
 ```
 
-> **Implementation note:** The `textureName` field is stored alongside `materialID` so that the GLB exporter (Step 8) can create named glTF materials without reverse-mapping IDs to names. The `triangleEntityIndices` and `triangleBrushIndices` arrays are propagated from `TriangulatedMesh` for use by the clustering step (Step 6).
+> **Implementation note:** The `textureName` field is stored alongside `materialID` so that the GLB exporter (Feature 8) can create named glTF materials without reverse-mapping IDs to names. The `triangleEntityIndices` and `triangleBrushIndices` arrays are propagated from `TriangulatedMesh` for use by the clustering feature (Feature 6).
 
 ---
 
@@ -55,9 +57,9 @@ Use a `Map` keyed on quantized vertex attributes (snap each component to a 1e-4 
 
 ### Integration Smoke Test
 
-Run Steps 1–5 on `tests/fixtures/hollow-room.map` (6 brushes forming a hollow room, 2 different textures — e.g. floor and walls). Assert the output contains exactly 2 material batches. Verify that the total triangle count across both batches matches the expected count from Step 4.
+Run Features 1–5 on `tests/fixtures/hollow-room.map` (6 brushes forming a hollow room, 2 different textures — e.g. floor and walls). Assert the output contains exactly 2 material batches. Verify that the total triangle count across both batches matches the expected count from Feature 4.
 
-Run Steps 1–5 on `tests/fixtures/textured-room.map` (3+ distinct textures). Assert the output contains at least 3 material batches — one per unique texture. Verify that each batch's `materialID` is unique and triangle counts sum to the total from Step 4.
+Run Features 1–5 on `tests/fixtures/textured-room.map` (3+ distinct textures). Assert the output contains at least 3 material batches — one per unique texture. Verify that each batch's `materialID` is unique and triangle counts sum to the total from Feature 4.
 
 ---
 

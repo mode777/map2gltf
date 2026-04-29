@@ -1,4 +1,4 @@
-# Step 3 — World CSG: Inter-Brush Face Removal
+# Feature 3 — World CSG: Inter-Brush Face Removal
 
 [← Back to main spec](../spec.md)
 
@@ -8,14 +8,16 @@
 
 Remove hidden faces between touching or overlapping brushes by clipping each polygon against all other brushes and discarding occluded fragments.
 
-**Input:** All `ConvexPolygon[]` from all brushes (from [Step 2](02-brush-to-polygons.md))
+**Input:** All `ConvexPolygon[]` from all brushes (from [Feature 2](02-brush-to-polygons.md))
 **Output:** Clipped `ConvexPolygon[]` with no hidden inter-brush faces
+
+**Primary code file:** `src/pipeline/03-world-csg.ts`
 
 ---
 
 ## Algorithm
 
-The algorithm operates on every polygon produced in Step 2. Only **worldspawn** brushes participate in CSG (see [compiler orchestration](../spec.md)).
+The algorithm operates on every polygon produced in Feature 2. Only **worldspawn** brushes participate in CSG (see [compiler orchestration](../spec.md)).
 
 ### Per-Polygon Subtraction
 
@@ -27,7 +29,7 @@ To subtract brush *B′* (with planes {C₁, C₂, …, Cₖ}) from polygon frag
 
 1. Initialise `remaining = F`.
 2. For each plane Cᵢ of B′ (with normal **cn** and distance *cd*):
-   a. **Split** `remaining` against Cᵢ into a **front fragment** (outside the half-space) and a **back fragment** (inside the half-space), using the Sutherland-Hodgman clip from [Step 2](02-brush-to-polygons.md):
+    a. **Split** `remaining` against Cᵢ into a **front fragment** (outside the half-space) and a **back fragment** (inside the half-space), using the Sutherland-Hodgman clip from [Feature 2](02-brush-to-polygons.md):
       - **Front fragment:** vertices where dot(v, cn) − cd ≥ −ε (the portion on the *outside* of this plane). This portion is **definitely not inside B′** and is emitted to the output immediately.
       - **Back fragment:** vertices where dot(v, cn) − cd ≤ +ε (the portion on the *inside* of this plane). This portion *might* be inside B′ and must be tested against the remaining planes.
    b. Set `remaining = back fragment`.
@@ -69,7 +71,7 @@ Brute-force complexity is O(P × B × F) where *P* is total polygon count, *B* i
 The output is the same `ConvexPolygon[]` type as the input. Each surviving polygon (or fragment) retains its `ParsedFace` reference and `brushIndex` for downstream UV computation and tracing.
 
 ```typescript
-// Same type as Step 2 output — re-stated here for clarity
+// Same type as Feature 2 output — re-stated here for clarity
 interface ConvexPolygon {
     vertices: Vec3[];       // CCW winding, length ≥ 3
     face: ParsedFace;       // originating face (for normal, texture axes, material)
@@ -172,12 +174,12 @@ function subtractBrush(fragment: ConvexPolygon, brush: ParsedBrush): ConvexPolyg
 
 ### `splitPolygon`
 
-Extends the Sutherland-Hodgman clipper from Step 2 to return **both** sides of the split:
+Extends the Sutherland-Hodgman clipper from Feature 2 to return **both** sides of the split:
 
 - Walk each edge (A → B), classify vertices against the plane.
 - Emit to `frontVerts` or `backVerts` depending on classification.
 - At crossing edges, compute the intersection and emit to both lists.
-- Apply plane-snap to intersection points (same as Step 2).
+- Apply plane-snap to intersection points (same as Feature 2).
 - Return `{ front: ConvexPolygon | null, back: ConvexPolygon | null }`.
 
 **Coplanar face handling:** When all vertices lie on the clip plane (all classified as "on"), the polygon's face normal is compared against the clip plane normal via dot product. If the dot product is positive (same direction), the polygon is assigned to the **front** side; if negative (opposite direction), it is assigned to the **back** side. This ensures that coplanar touching faces between two brushes are correctly removed — the face belonging to the other brush falls into the "inside" region and is discarded.
@@ -188,7 +190,7 @@ Use the `util/spatial-hash.ts` module. Cell size should match the largest brush 
 
 ### Brush Identity Tracking
 
-To group polygons by source brush and exclude self-testing, add a `brushIndex: number` field to `ConvexPolygon` (assigned in Step 2, preserved through CSG):
+To group polygons by source brush and exclude self-testing, add a `brushIndex: number` field to `ConvexPolygon` (assigned in Feature 2, preserved through CSG):
 
 ```typescript
 interface ConvexPolygon {

@@ -61,8 +61,8 @@ async function handleFile(file: File): Promise<void> {
     highlighter.clear();
     bvhTree.clearSelection();
     const mapSource = await file.text();
-    const skipClustering = !clusteringCheckbox.checked;
-    worker.postMessage({ mapSource, options: { skipClustering } });
+    const skipWorldspawnClustering = !clusteringCheckbox.checked;
+    worker.postMessage({ mapSource, options: { skipWorldspawnClustering } });
 }
 
 initDropZone({
