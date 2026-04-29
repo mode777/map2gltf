@@ -190,9 +190,10 @@ Parse `tests/fixtures/box.map` (1 worldspawn entity, 1 brush, 6 faces). Round-tr
 ### Exported Function
 
 ```typescript
-// pipeline/01-map-parsing.ts
 export function parseMap(source: string, diagnostics?: Diagnostics): ParsedEntity[]
 ```
+
+Implementation reference: [src/pipeline/01-map-parsing.ts](../../src/pipeline/01-map-parsing.ts).
 
 ### Algorithm
 

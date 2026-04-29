@@ -10,7 +10,7 @@ Convert all surviving convex polygons into triangles and compute per-vertex attr
 
 > **Precondition:** Polygons with `textureName === 'clip'` are excluded by the compiler before this feature. Only visible geometry reaches triangulation.
 
-**Input:** `ConvexPolygon[]` (from [Feature 3](03-world-csg.md)), `textureSizes: Map<string, [number, number]>`, and `defaultTextureSize` (from `CompileOptions`)
+**Input:** `ConvexPolygon[]` (from [Feature 3](03-world-csg.md)), `TextureMap` (from [Feature 12](12-texture-resolution.md)), and `defaultTextureSize` (from `CompileOptions`)
 **Output:** `TriangulatedMesh` (vertices, triangle indices, per-triangle material names)
 
 **Primary code file:** `src/pipeline/04-triangulation.ts`
@@ -54,7 +54,7 @@ u = ( dot(p, face.texAxisU) + face.texOffsetU ) / face.texScaleU / textureWidth
 v = ( dot(p, face.texAxisV) + face.texOffsetV ) / face.texScaleV / textureHeight
 ```
 
-`textureWidth` and `textureHeight` are the pixel dimensions of the texture identified by `face.textureName`, resolved from a material database at compile time. If the texture cannot be resolved, a caller-supplied fallback size is used for both dimensions. The default fallback remains 64×64, and a warning is emitted whenever that fallback path is taken.
+`textureWidth` and `textureHeight` are the pixel dimensions of the texture identified by `face.textureName`, resolved from the `TextureMap` produced by [Feature 12](12-texture-resolution.md). If the texture entry is `null` (unresolved), the caller-supplied `defaultTextureSize` fallback is used for both dimensions (default: 64×64). Diagnostic warnings for unresolved textures are emitted by the texture resolution step (Feature 12), not by triangulation.
 
 ---
 
@@ -84,7 +84,7 @@ Each group of 3 consecutive indices defines one triangle. `triangleMaterials[i]`
 4. **Normal assignment:** For each emitted triangle, assert all 3 vertices share the same normal, and that normal equals `face.normal` of the source polygon.
 5. **UV computation — axis-aligned face:** For a face on the XY plane with identity texture axes (U = X, V = Y), scale = 1, offset = 0, and a 64×64 texture: a vertex at (32, 32, 0) should produce UV = (0.5, 0.5). Assert within ε.
 6. **UV computation — rotated axes:** For a face with 45° rotated Valve 220 axes, compute expected UVs by hand and assert they match within ε.
-7. **Default texture fallback:** Provide a polygon with an unresolvable texture name. Assert a warning is emitted and UVs are computed using the configured fallback size.
+7. **Default texture fallback:** Provide a polygon whose texture name maps to `null` in the `TextureMap`. Assert UVs are computed using the configured fallback size.
 8. **Index validity:** Assert every index in `indices[]` is in range [0, vertices.length − 1].
 
 ### Integration Smoke Test
@@ -101,61 +101,25 @@ Run Features 1–4 on `tests/fixtures/textured-room.map` (3+ distinct textures).
 ### Exported Function
 
 ```typescript
-// pipeline/04-triangulation.ts
 export function triangulate(
     polygons: ConvexPolygon[],
-    textureSizes: Map<string, [number, number]>,
-    diagnostics?: Diagnostics,
+    textureMap: TextureMap,
     defaultTextureSize = 64,
 ): TriangulatedMesh
 ```
 
-> **Implementation note:** The `diagnostics` parameter is optional. When provided, a warning is emitted for each unresolved texture name. The fallback texture size is caller-configurable and defaults to 64×64.
+> **Implementation note:** The `diagnostics` parameter was removed. All "texture not found" warnings are emitted by the texture resolution step ([Feature 12](12-texture-resolution.md)). The fallback texture size is caller-configurable and defaults to 64×64.
 
 ### Algorithm
 
-```typescript
-function triangulate(
-    polygons: ConvexPolygon[],
-    textureSizes: Map<string, [number, number]>,
-    diagnostics?: Diagnostics,
-    defaultTextureSize = 64,
-): TriangulatedMesh {
-    const vertices: Vertex[] = [];
-    const indices: number[] = [];
-    const triangleMaterials: string[] = [];
+`triangulate()` does three things per polygon:
 
-    const defaultSize: [number, number] = [defaultTextureSize, defaultTextureSize];
+1. Resolve texture dimensions from `TextureMap`, falling back to `defaultTextureSize`.
+2. Emit one vertex per polygon corner with world position, face normal, and UVs derived from the Valve 220 axes.
+3. Fan-triangulate the polygon and record per-triangle material, entity, and brush metadata.
 
-    for (const poly of polygons) {
-        const face = poly.face;
-        const [texW, texH] = textureSizes.get(face.textureName.toLowerCase()) ?? defaultSize;
-        // Emit a warning via diagnostics if texture not found
-
-        const baseIndex = vertices.length;
-
-        // Create vertices with UV
-        for (const p of poly.vertices) {
-            const u = (dot(p, face.texAxisU) + face.texOffsetU) / face.texScaleU / texW;
-            const v = (dot(p, face.texAxisV) + face.texOffsetV) / face.texScaleV / texH;
-            vertices.push({
-                position: p,
-                normal: face.normal,
-                uv: { x: u, y: v }
-            });
-        }
-
-        // Fan triangulation from vertex 0
-        for (let i = 1; i < poly.vertices.length - 1; i++) {
-            indices.push(baseIndex, baseIndex + i, baseIndex + i + 1);
-            triangleMaterials.push(face.textureName);
-        }
-    }
-
-    return { vertices, indices, triangleMaterials };
-}
-```
+Implementation reference: [src/pipeline/04-triangulation.ts](../../src/pipeline/04-triangulation.ts).
 
 ### Texture Size Resolution
 
-The `textureSizes` map is provided by the caller (via `CompileOptions`). Keys are lowercase texture names. If a texture name is not found, the caller-provided `defaultTextureSize` is used for both width and height, and a diagnostic warning is emitted. Scale values of 0 are treated as 1 (see Feature 1 clamping).
+The `textureMap` is produced by the texture resolution step ([Feature 12](12-texture-resolution.md)). Keys are texture names as they appear in the `.map` file. The lookup uses `textureName.toLowerCase()` to match case-insensitively. If a texture name maps to `null` (unresolved) or is not found in the map, the caller-provided `defaultTextureSize` is used for both width and height. Scale values of 0 are treated as 1 (see Feature 1 clamping).

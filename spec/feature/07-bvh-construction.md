@@ -83,7 +83,6 @@ Build a BVH from 100+ clusters (from `tests/fixtures/large-map.map`). Implement 
 ### Exported Function
 
 ```typescript
-// pipeline/07-bvh-construction.ts
 interface BVHOptions {
     leafThreshold?: number;
 }
@@ -91,69 +90,18 @@ interface BVHOptions {
 export function buildBVH(clusters: Cluster[], options?: BVHOptions): BVHNode[]
 ```
 
+Implementation reference: [src/pipeline/07-bvh-construction.ts](../../src/pipeline/07-bvh-construction.ts).
+
 ### Algorithm (Top-Down SAH Build)
 
-```typescript
-function buildBVH(clusters: Cluster[], options?: BVHOptions): BVHNode[] {
-    const nodes: BVHNode[] = [];
-    const leafThreshold = options?.leafThreshold ?? 4;
+`buildBVH()` constructs the tree top-down:
 
-    function build(clusterIndices: number[]): number {
-        const nodeIndex = nodes.length;
-        const bounds = mergeAABBs(clusterIndices.map(i => clusters[i]!.bounds));
+1. Compute the bounds for the current cluster set.
+2. Emit a leaf when the cluster count is at or below the leaf threshold.
+3. Otherwise, evaluate SAH split candidates, partition by centroid, and recurse on left and right subsets.
+4. Fall back to a leaf when no non-degenerate split is available.
 
-        // Leaf case
-        if (clusterIndices.length <= leafThreshold) {
-            nodes.push({
-                bounds,
-                left: -1,
-                right: -1,
-                firstCluster: clusterIndices[0]!,
-                clusterCount: clusterIndices.length
-            });
-            return nodeIndex;
-        }
-
-        // Find best split via SAH
-        const { axis, splitPos } = findBestSplit(clusterIndices, clusters, bounds);
-
-        // Partition
-        const leftIndices: number[] = [];
-        const rightIndices: number[] = [];
-        for (const ci of clusterIndices) {
-            const centroid = aabbCentroid(clusters[ci]!.bounds);
-            if (centroidComponent(centroid, axis) < splitPos) {
-                leftIndices.push(ci);
-            } else {
-                rightIndices.push(ci);
-            }
-        }
-
-        // Fallback: if partition is degenerate, split at midpoint
-        if (leftIndices.length === 0 || rightIndices.length === 0) {
-            nodes.push({
-                bounds,
-                left: -1, right: -1,
-                firstCluster: clusterIndices[0]!,
-                clusterCount: clusterIndices.length
-            });
-            return nodeIndex;
-        }
-
-        // Reserve this node’s slot, then recurse
-        nodes.push({ bounds, left: -1, right: -1, firstCluster: -1, clusterCount: 0 });
-        const leftChild = build(leftIndices);    // always nodeIndex + 1
-        const rightChild = build(rightIndices);
-        nodes[nodeIndex]!.left = leftChild;
-        nodes[nodeIndex]!.right = rightChild;
-
-        return nodeIndex;
-    }
-
-    build([...Array(clusters.length).keys()]);
-    return nodes;
-}
-```
+Implementation reference: [src/pipeline/07-bvh-construction.ts](../../src/pipeline/07-bvh-construction.ts).
 
 ### SAH Split Candidate Evaluation
 
@@ -168,14 +116,11 @@ If the best split cost ≥ SA(parent) × count (leaf cost), create a leaf.
 
 ### Surface Area Computation
 
-```typescript
-function surfaceArea(aabb: AABB): number {
-    const dx = aabb.max.x - aabb.min.x;
-    const dy = aabb.max.y - aabb.min.y;
-    const dz = aabb.max.z - aabb.min.z;
-    return 2 * (dx * dy + dy * dz + dz * dx);
-}
-```
+Surface area uses the standard AABB formula:
+
+`2 * (dx * dy + dy * dz + dz * dx)`
+
+Implementation reference: [src/pipeline/07-bvh-construction.ts](../../src/pipeline/07-bvh-construction.ts).
 
 ### Cluster Reordering
 

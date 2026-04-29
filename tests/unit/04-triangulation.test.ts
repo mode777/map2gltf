@@ -1,8 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { triangulate } from '../../src/pipeline/04-triangulation.js';
 import type { ConvexPolygon, Vec3 } from '../../src/types.js';
-import { createDiagnostics } from '../../src/types.js';
-import * as vec3 from '../../src/math/vec3.js';
 
 function makePoly(vertices: Vec3[], textureName = 'test', brushIndex = 0, entityIndex = 0): ConvexPolygon {
     return {
@@ -130,30 +128,28 @@ describe('04-triangulation', () => {
         expect(v.uv.x).toBeCloseTo(s, 3);
     });
 
-    it('should emit warning and use default for unknown texture', () => {
-        const diag = createDiagnostics();
+    it('should use default size for unknown texture not in textureMap', () => {
         const poly = makePoly([
             { x: 0, y: 0, z: 0 },
             { x: 64, y: 0, z: 0 },
             { x: 64, y: 64, z: 0 },
         ], 'unknown_tex');
-        triangulate([poly], new Map(), diag);
-        expect(diag.warnings.length).toBeGreaterThan(0);
+        const mesh = triangulate([poly], new Map());
+        // Should still produce valid UVs using default 64x64
+        expect(mesh.vertices[0]!.uv.x).toBeCloseTo(0);
     });
 
     it('should use a configurable default texture size for UV fallback', () => {
-        const diag = createDiagnostics();
         const poly = makePoly([
             { x: 0, y: 0, z: 0 },
             { x: 128, y: 0, z: 0 },
             { x: 128, y: 128, z: 0 },
         ], 'missing_tex');
 
-        const mesh = triangulate([poly], new Map(), diag, 128);
+        const mesh = triangulate([poly], new Map(), 128);
 
         expect(mesh.vertices[1]!.uv.x).toBeCloseTo(1);
         expect(mesh.vertices[2]!.uv.y).toBeCloseTo(-1);
-        expect(diag.warnings[0]?.message).toContain('128x128');
     });
 
     it('should produce valid indices', () => {

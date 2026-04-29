@@ -1,5 +1,5 @@
 import { Document, NodeIO } from '@gltf-transform/core';
-import type { MaterialBatch, Cluster, BVHNode, Vec3, ParsedEntity } from '../types.js';
+import type { MaterialBatch, Cluster, BVHNode, Vec3, ParsedEntity, TextureMap } from '../types.js';
 import { mergeAABBs } from '../math/aabb.js';
 
 function convertCoord(v: Vec3): [number, number, number] {
@@ -36,6 +36,7 @@ export async function exportGLB(
     bvh: BVHNode[],
     entityClusters: Cluster[] = [],
     entities: ParsedEntity[] = [],
+    textureMap?: TextureMap,
 ): Promise<Uint8Array> {
     const doc = new Document();
     doc.getRoot().getAsset().generator = 'map2gltf';
@@ -43,14 +44,38 @@ export async function exportGLB(
     const scene = doc.createScene('map');
     const buf = doc.createBuffer();
 
+    // Deduplicate glTF images/textures by relativePath
+    const imageMap = new Map<string, ReturnType<Document['createTexture']>>();
+
+    function getOrCreateTexture(relativePath: string): ReturnType<Document['createTexture']> {
+        let tex = imageMap.get(relativePath);
+        if (!tex) {
+            tex = doc.createTexture(relativePath)
+                .setURI(relativePath)
+                .setMimeType('image/png');
+            imageMap.set(relativePath, tex);
+        }
+        return tex;
+    }
+
     // Create materials (one per batch, named by texture)
     const materialMap = new Map<number, ReturnType<Document['createMaterial']>>();
     for (const batch of batches) {
         if (!materialMap.has(batch.materialID)) {
-            const mat = doc.createMaterial(batch.textureName)
-                .setBaseColorFactor([1, 1, 1, 1])
+            const texName = batch.textureName;
+            const texInfo = textureMap?.get(texName.toLowerCase()) ?? textureMap?.get(texName) ?? null;
+
+            const mat = doc.createMaterial(texName)
                 .setMetallicFactor(0)
                 .setRoughnessFactor(1);
+
+            if (texInfo) {
+                const tex = getOrCreateTexture(texInfo.relativePath);
+                mat.setBaseColorTexture(tex);
+            } else {
+                mat.setBaseColorFactor([1, 0, 1, 1]);
+            }
+
             materialMap.set(batch.materialID, mat);
         }
     }

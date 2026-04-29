@@ -10,6 +10,14 @@
         ".": {
             "import": "./dist/compiler.js",
             "types": "./dist/compiler.d.ts"
+        },
+        "./node": {
+            "import": "./dist/providers/node-texture-provider.js",
+            "types": "./dist/providers/node-texture-provider.d.ts"
+        },
+        "./browser": {
+            "import": "./dist/providers/browser-texture-provider.js",
+            "types": "./dist/providers/browser-texture-provider.d.ts"
         }
     },
     "bin": {
@@ -51,6 +59,7 @@
         "vitest": "^2.1.9"
     },
     "dependencies": {
-        "@gltf-transform/core": "^4.3.0"
+        "@gltf-transform/core": "^4.3.0",
+        "image-size": "^2.0.1"
     }
 }

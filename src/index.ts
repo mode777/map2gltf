@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { compile, compileWithDiagnostics } from './compiler.js';
 import type { CompileOptions, Diagnostics } from './compiler.js';
+import { NodeTextureProvider } from './providers/node-texture-provider.js';
 
 export const USAGE_TEXT = `Usage: map2gltf <input.map> [options]
 
@@ -15,6 +16,7 @@ Options:
   --min-cluster-size <n>     Min triangles per cluster (default: 8)
   --bvh-leaf-threshold <n>   BVH leaf cluster threshold (default: 4)
   --no-clustering            Skip worldspawn spatial clustering
+  --texture-path <dir>       Base directory for texture lookup
   -v, --verbose              Print diagnostics to stderr
   -h, --help                 Show help`;
 
@@ -33,6 +35,10 @@ type CompileWithDiagnosticsFn = (
     mapSource: string,
     options?: Partial<CompileOptions>,
 ) => Promise<{ glb: Uint8Array; diagnostics: Diagnostics }>;
+
+type MutableCompileOptions = {
+    -readonly [K in keyof CompileOptions]?: CompileOptions[K];
+};
 
 export interface CliRuntime {
     readFile(path: string): string;
@@ -76,10 +82,11 @@ export function parseCliArgs(args: string[]): CliCommand {
         return { kind: 'help' };
     }
 
-    const compileOptions: Partial<CompileOptions> = {};
+    const compileOptions: MutableCompileOptions = {};
     let inputFile = '';
     let outputFile: string | undefined;
     let verbose = false;
+    let texturePath: string | undefined;
 
     for (let i = 0; i < args.length; i++) {
         const arg = args[i]!;
@@ -116,6 +123,10 @@ export function parseCliArgs(args: string[]): CliCommand {
                 compileOptions.bvhLeafThreshold = readIntegerFlag(args, i, arg);
                 i++;
                 break;
+            case '--texture-path':
+                texturePath = readValueFlag(args, i, arg);
+                i++;
+                break;
             default:
                 if (arg.startsWith('-')) {
                     throw new Error(`Unknown option ${arg}`);
@@ -132,12 +143,19 @@ export function parseCliArgs(args: string[]): CliCommand {
         throw new Error('No input file specified');
     }
 
+    let textureProvider: import('./types.js').TextureProvider | undefined;
+    if (texturePath) {
+        textureProvider = new NodeTextureProvider(texturePath);
+    }
+
     return {
         kind: 'compile',
         inputFile,
         ...(outputFile ? { outputFile } : {}),
         verbose,
-        compileOptions,
+        compileOptions: textureProvider
+            ? { ...compileOptions, textureProvider }
+            : compileOptions,
     };
 }
 
@@ -155,6 +173,12 @@ export async function runCli(args: string[], runtime: CliRuntime = defaultRuntim
 
         if (command.verbose) {
             const { glb, diagnostics } = await runtime.compileWithDiagnostics(mapSource, command.compileOptions);
+            for (const info of diagnostics.info) {
+                runtime.stderr(`[INFO] [${info.step}] ${info.message}${info.location ? ` (${info.location})` : ''}`);
+            }
+            for (const debug of diagnostics.debug) {
+                runtime.stderr(`[DEBUG] [${debug.step}] ${debug.message}${debug.location ? ` (${debug.location})` : ''}`);
+            }
             for (const w of diagnostics.warnings) {
                 runtime.stderr(`[WARN] [${w.step}] ${w.message}${w.location ? ` (${w.location})` : ''}`);
             }
@@ -179,6 +203,19 @@ async function main(): Promise<void> {
     process.exit(await runCli(process.argv.slice(2)));
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+function isMainModule(): boolean {
+    const entryPath = process.argv[1];
+    if (!entryPath) {
+        return false;
+    }
+
+    try {
+        return realpathSync(entryPath) === realpathSync(fileURLToPath(import.meta.url));
+    } catch {
+        return import.meta.url === pathToFileURL(entryPath).href;
+    }
+}
+
+if (isMainModule()) {
     void main();
 }

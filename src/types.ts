@@ -14,6 +14,17 @@ export interface AABB {
     readonly max: Vec3;
 }
 
+export interface TextureInfo {
+    readonly relativePath: string;
+    readonly size: [number, number];
+}
+
+export interface TextureProvider {
+    resolve(textureName: string): Promise<TextureInfo | null>;
+}
+
+export type TextureMap = Map<string, TextureInfo | null>;
+
 export interface CompileOptions {
     readonly epsilon: number;
     readonly seedExtent: number;
@@ -24,7 +35,8 @@ export interface CompileOptions {
     readonly minClusterSize: number;
     readonly bvhLeafThreshold: number;
     readonly sahCandidates: number;
-    readonly textureSizes: Map<string, [number, number]>;
+    readonly textureProvider?: TextureProvider | undefined;
+    readonly textureBasePath?: string | undefined;
     readonly skipWorldspawnClustering: boolean;
 }
 
@@ -38,7 +50,6 @@ export const DEFAULT_OPTIONS: CompileOptions = {
     minClusterSize: 24,
     bvhLeafThreshold: 4,
     sahCandidates: 12,
-    textureSizes: new Map(),
     skipWorldspawnClustering: false,
 };
 
@@ -49,12 +60,14 @@ export interface DiagnosticMessage {
 }
 
 export interface Diagnostics {
+    readonly info: DiagnosticMessage[];
+    readonly debug: DiagnosticMessage[];
     readonly warnings: DiagnosticMessage[];
     readonly errors: DiagnosticMessage[];
 }
 
 export function createDiagnostics(): Diagnostics {
-    return { warnings: [], errors: [] };
+    return { info: [], debug: [], warnings: [], errors: [] };
 }
 
 export interface ParsedFace {

@@ -39,8 +39,18 @@ The package exposes `compiler.ts` as the main entry point. Consumers import the 
 import { compile } from 'map2gltf';
 
 const mapSource = fs.readFileSync('level.map', 'utf-8');
-const glb = await compile(mapSource, { textureSizes: new Map() });
+const glb = await compile(mapSource);
 fs.writeFileSync('level.glb', glb);
+```
+
+To enable texture resolution in Node.js, import the provider from the `map2gltf/node` sub-path export:
+
+```typescript
+import { compile } from 'map2gltf';
+import { NodeTextureProvider } from 'map2gltf/node';
+
+const provider = new NodeTextureProvider('./textures');
+const glb = await compile(mapSource, { textureProvider: provider });
 ```
 
 ### Package Exports
@@ -53,12 +63,20 @@ fs.writeFileSync('level.glb', glb);
         ".": {
             "import": "./dist/compiler.js",
             "types": "./dist/compiler.d.ts"
+        },
+        "./node": {
+            "import": "./dist/providers/node-texture-provider.js",
+            "types": "./dist/providers/node-texture-provider.d.ts"
+        },
+        "./browser": {
+            "import": "./dist/providers/browser-texture-provider.js",
+            "types": "./dist/providers/browser-texture-provider.d.ts"
         }
     }
 }
 ```
 
-Only the top-level `compile()` function and the `CompileOptions` / `Diagnostics` types are part of the public API. Internal pipeline features, math utilities, and types are implementation details and are **not** exported from the package entry point.
+The main entry point re-exports the `TextureProvider`, `TextureInfo`, and `TextureMap` types. Concrete platform implementations (`NodeTextureProvider`, `BrowserTextureProvider`) are imported explicitly via the `./node` and `./browser` sub-path exports — no automatic platform detection.
 
 The package manifest also exposes the CLI binary via its `bin` field, but the CLI behavior itself is specified separately in [Feature 10](10-cli-interface.md).
 
@@ -75,6 +93,9 @@ export async function compileWithDiagnostics(
 export interface CompileOptions { /* as defined in spec.md */ }
 export interface Diagnostics { /* as defined in spec.md */ }
 export interface DiagnosticMessage { /* as defined in spec.md */ }
+export interface TextureProvider { /* as defined in Feature 12 */ }
+export interface TextureInfo { /* as defined in Feature 12 */ }
+export type TextureMap = Map<string, TextureInfo | null>;
 ```
 
 > **Implementation note — async API:** Both `compile()` and `compileWithDiagnostics()` are `async` functions returning Promises. This is because the GLB export feature uses `@gltf-transform/core`'s async `writeBinary()`. All callers must `await` the result.
@@ -109,7 +130,14 @@ The build emits `.d.ts` and `.d.ts.map` files (enabled by `declaration` and `dec
 
 The core library (`compiler.ts` and all pipeline features) does **not** use Node.js-specific APIs (`fs`, `path`, `process`, `Buffer`, etc.) in its compilation logic. The `compile()` function accepts a `string` and returns a `Uint8Array` — both are platform-neutral types. This makes the library directly importable in browser bundles (as used by Feature 11's Web Worker).
 
-The only Node.js dependency is in `src/index.ts` (the CLI entry point described in [Feature 10](10-cli-interface.md)), which uses `fs` and `process.argv`. This file is excluded from browser builds.
+The platform-specific `TextureProvider` implementations (`src/providers/`) are separated via sub-path exports:
+
+* `map2gltf/node` — `NodeTextureProvider`, uses `node:fs`, `node:path`, and `image-size`.
+* `map2gltf/browser` — `BrowserTextureProvider`, uses the native `Image` API.
+
+The Vite bundler tree-shakes the Node.js provider out of browser builds entirely.
+
+The only other Node.js dependency is in `src/index.ts` (the CLI entry point described in [Feature 10](10-cli-interface.md)), which uses `fs` and `process.argv`. This file is excluded from browser builds.
 
 ---
 
@@ -144,6 +172,12 @@ The `prepublishOnly` script ensures a fresh build before every `npm publish`:
 3. **Partial options:** Call `compile(mapSource, { maxClusterSize: 256 })` with a subset of options. Assert defaults are applied for omitted fields and compilation succeeds.
 4. **Diagnostics passthrough:** Call `compileWithDiagnostics()` with a map containing a missing texture reference. Assert `diagnostics.warnings` contains at least one entry.
 5. **No Node.js APIs in core:** Static analysis (grep or lint rule): assert that no file in `src/pipeline/` or `src/math/` imports from `node:fs`, `node:path`, or other Node built-in modules.
+
+### Dependency
+
+| Package | Scope | Purpose |
+|---------|-------|---------|
+| `image-size` | `dependencies` | Read PNG dimensions from file headers (Node.js provider) |
 
 ### Integration Test
 

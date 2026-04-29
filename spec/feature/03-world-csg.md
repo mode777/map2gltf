@@ -108,69 +108,24 @@ Run the CSG pass on `tests/fixtures/room-with-pillar.map` (6 brushes forming wal
 ### Exported Function
 
 ```typescript
-// pipeline/03-world-csg.ts
 export function worldCSG(polygons: ConvexPolygon[]): ConvexPolygon[]
 ```
 
 ### Algorithm (pseudocode)
 
-```typescript
-function worldCSG(polygons: ConvexPolygon[]): ConvexPolygon[] {
-    // Group polygons by their source brush
-    const brushPolygons: Map<ParsedBrush, ConvexPolygon[]> = groupByBrush(polygons);
-    const allBrushes = [...brushPolygons.keys()];
+`worldCSG()` performs brush-against-brush subtraction in three stages:
 
-    // Build spatial hash for acceleration
-    const grid = buildSpatialHash(allBrushes, gridCellSize);
+1. Group polygons by source brush.
+2. Use the spatial hash to find overlapping candidate brushes per source brush.
+3. Repeatedly subtract candidate brushes from each polygon fragment, discarding fragments that end up fully inside another brush.
 
-    const result: ConvexPolygon[] = [];
-
-    for (const [brush, polys] of brushPolygons) {
-        // Find candidate brushes whose AABBs overlap this brush’s AABB
-        const candidates = grid.query(computeBrushAABB(brush))
-            .filter(b => b !== brush);
-
-        for (const poly of polys) {
-            let fragments = [poly];
-            for (const otherBrush of candidates) {
-                const nextFragments: ConvexPolygon[] = [];
-                for (const frag of fragments) {
-                    nextFragments.push(...subtractBrush(frag, otherBrush));
-                }
-                fragments = nextFragments;
-                if (fragments.length === 0) break;
-            }
-            result.push(...fragments);
-        }
-    }
-
-    return result;
-}
-```
+Implementation reference: [src/pipeline/03-world-csg.ts](../../src/pipeline/03-world-csg.ts).
 
 ### `subtractBrush` Detail
 
-```typescript
-function subtractBrush(fragment: ConvexPolygon, brush: ParsedBrush): ConvexPolygon[] {
-    const survivors: ConvexPolygon[] = [];
-    let remaining: ConvexPolygon | null = fragment;
+`subtractBrush()` clips a polygon fragment against every plane in the other brush, collecting only the portions that remain outside. Any final remainder that stays inside all planes is discarded.
 
-    for (const face of brush.faces) {
-        if (remaining === null) break;
-
-        const { front, back } = splitPolygon(remaining, face.normal, face.distance);
-
-        if (front !== null && front.vertices.length >= 3) {
-            survivors.push(front);   // outside this plane → safe
-        }
-
-        remaining = (back !== null && back.vertices.length >= 3) ? back : null;
-    }
-
-    // remaining is fully inside the brush → discard it (do not push)
-    return survivors;
-}
-```
+Implementation reference: [src/pipeline/03-world-csg.ts](../../src/pipeline/03-world-csg.ts).
 
 ### `splitPolygon`
 

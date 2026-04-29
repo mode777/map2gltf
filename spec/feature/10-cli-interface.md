@@ -32,6 +32,7 @@ Options:
   --min-cluster-size <n>     Min triangles per cluster (default: 8)
   --bvh-leaf-threshold <n>   BVH leaf cluster threshold (default: 4)
   --no-clustering            Skip worldspawn spatial clustering
+  --texture-path <dir>       Base directory for texture lookup
   -v, --verbose              Print diagnostics to stderr
   -h, --help                 Show help
 ```
@@ -51,6 +52,7 @@ The current implementation actively handles these options:
 | `--min-cluster-size <n>` | Sets `minClusterSize` |
 | `--bvh-leaf-threshold <n>` | Sets `bvhLeafThreshold` |
 | `--no-clustering` | Sets `skipWorldspawnClustering: true` |
+| `--texture-path <dir>` | Creates a `NodeTextureProvider` with the given directory and sets it as `textureProvider` on `CompileOptions` |
 | `-v`, `--verbose` | Switches from `compile()` to `compileWithDiagnostics()` |
 | `-h`, `--help` | Prints usage and exits `0` |
 
@@ -101,7 +103,8 @@ The location suffix is included only when present in the diagnostic record.
 
 The CLI forwards numeric overrides directly into the compiler options object:
 
-- `--default-texture-size <n>` controls the fallback texture dimensions used by [Feature 4](04-triangulation.md) when a texture name is missing from `textureSizes`.
+- `--default-texture-size <n>` controls the fallback texture dimensions used by [Feature 4](04-triangulation.md) when a texture is unresolved in the `TextureMap`.
+- `--texture-path <dir>` creates a `NodeTextureProvider` (from [Feature 12](12-texture-resolution.md)) that looks for textures as `<dir>/<name>.png`. When omitted, no provider is used and all textures receive the default size and magenta placeholder materials.
 - `--grid-cell-size <n>`, `--max-cluster-size <n>`, and `--min-cluster-size <n>` flow through to [Feature 6](06-clustering.md).
 - `--bvh-leaf-threshold <n>` controls the leaf cutoff used by [Feature 7](07-bvh-construction.md).
 
@@ -151,35 +154,22 @@ Execute the built `map2gltf` binary against `tests/fixtures/hollow-room.map`. As
 Run the CLI with `--bvh-leaf-threshold 8` on a fixture that normally produces a split BVH. Assert the emitted stats or derived structure reflect the larger threshold.
 
 Run the CLI with `--default-texture-size 128` on a map with unresolved textures in verbose mode. Assert diagnostics report `128x128` fallback behaviour.
-
+Run the CLI with `--texture-path ./textures` pointing to a directory containing matching PNGs. Assert the output GLB contains texture-referencing materials rather than magenta placeholders.
 ---
 
 ## Implementation
 
 ### Entry Point
 
-```typescript
-// src/index.ts
-#!/usr/bin/env node
-import { readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { compile, compileWithDiagnostics } from './compiler.js';
-```
-
 The CLI file remains the process entrypoint script, but it now exports `parseCliArgs()` and `runCli()` so the parsing contract can be tested without spawning a subprocess. Filesystem I/O and terminal output remain within the CLI boundary.
+
+Implementation reference: [src/index.ts](../../src/index.ts).
 
 ### Control Flow
 
-```typescript
-async function main(): Promise<void> {
-  process.exit(await runCli(process.argv.slice(2)));
-}
+The CLI bootstraps by parsing `process.argv`, delegating execution to `runCli()`, and exiting with its numeric status code when invoked as the process entrypoint.
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  void main();
-}
-```
+Implementation reference: [src/index.ts](../../src/index.ts).
 
 ### Dependency Boundary
 

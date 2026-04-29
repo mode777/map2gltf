@@ -108,7 +108,6 @@ Run Features 1–6 on `tests/fixtures/large-map.map` (50+ brushes). Assert: (a) 
 ### Exported Function
 
 ```typescript
-// pipeline/06-clustering.ts
 export function clusterGeometry(
     batches: MaterialBatch[],
     options?: Partial<ClusterOptions>,
@@ -116,32 +115,19 @@ export function clusterGeometry(
 ): Cluster[]
 ```
 
+Implementation reference: [src/pipeline/06-clustering.ts](../../src/pipeline/06-clustering.ts).
+
 ### Algorithm (pseudocode)
 
-```
-for each batch:
-    partition triangles into worldspawn vs entity groups by triangleEntityIndices
+`clusterGeometry()` processes each material batch as follows:
 
-    if skipWorldspawnClustering:
-        emit one worldspawn cluster for all worldspawn triangles in the batch
-        emit one entity cluster for each unique entityIndex >= 1
-        continue
+1. Partition triangles into worldspawn and entity groups using `triangleEntityIndices`.
+2. If `skipWorldspawnClustering` is enabled, emit one worldspawn cluster per batch and one cluster per non-worldspawn entity.
+3. Otherwise, group worldspawn triangles by brush, assign those brush groups to spatial grid cells, and split oversized candidates by recursive bisection.
+4. Emit one cluster per entity for non-worldspawn geometry.
+5. Iteratively merge undersized worldspawn clusters into the nearest same-material neighbor when the size cap allows it.
 
-    // Worldspawn: brush-intact spatial clustering
-    brushGroups = groupTrianglesByBrush(worldspawnTriangles, triangleBrushIndices)
-    cellMap = assign brushGroups to grid cells by centroid
-    for each cell:
-        candidate = all brush groups in cell
-        if triangle count > MAX_CLUSTER_SIZE:
-            split by recursive bisection of brush groups (not triangles)
-        emit clusters
-
-    // Entities: one cluster per entity
-    for each unique entityIndex ≥ 1:
-        emit one cluster with all triangles of that entity
-
-    merge undersized worldspawn clusters into nearest same-material neighbor
-```
+Implementation reference: [src/pipeline/06-clustering.ts](../../src/pipeline/06-clustering.ts).
 
 ### Min Size Merging
 

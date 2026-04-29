@@ -112,7 +112,6 @@ Process the wedge brush from `tests/fixtures/wedge.map`. Assert 5 polygons are e
 ### Exported Function
 
 ```typescript
-// pipeline/02-brush-to-polygons.ts
 export function brushToPolygons(brush: ParsedBrush, brushIndex: number, entityIndex?: number): ConvexPolygon[]
 ```
 
@@ -120,19 +119,15 @@ The `brushIndex` is assigned by the caller and stored on every emitted `ConvexPo
 
 ### Algorithm (per brush)
 
-```
-result = []
-for each face F in brush.faces:
-    poly = buildSeedPolygon(F.normal, F.distance, SEED_EXTENT)
-    for each other face G in brush.faces where G ≠ F:
-        poly = clipPolygonToPlane(poly, G.normal, G.distance)
-        if poly has < 3 vertices:
-            break   // face fully clipped away
-    if poly is valid (≥ 3 vertices, area > ε²):
-        enforce CCW winding relative to F.normal
-        result.push({ vertices: poly, face: F })
-return result
-```
+For each face in the brush:
+
+1. Build a large seed polygon on that face plane.
+2. Clip it against every other plane in the same brush.
+3. Discard degenerate results.
+4. Enforce CCW winding relative to the source face normal.
+5. Emit a `ConvexPolygon` carrying the original face reference plus `brushIndex` and `entityIndex`.
+
+Implementation reference: [src/pipeline/02-brush-to-polygons.ts](../../src/pipeline/02-brush-to-polygons.ts).
 
 ### Seed Polygon Construction Detail
 

@@ -57,6 +57,8 @@ describe('integration: compile()', () => {
         const { glb, diagnostics } = await compileWithDiagnostics(source);
         expect(glb.length).toBeGreaterThan(12);
         expect(diagnostics).toBeDefined();
+        expect(diagnostics.info).toBeDefined();
+        expect(diagnostics.debug).toBeDefined();
         expect(diagnostics.errors).toBeDefined();
         expect(diagnostics.warnings).toBeDefined();
     });

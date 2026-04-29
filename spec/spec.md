@@ -41,7 +41,8 @@
 flowchart TD
     A[".map File Parse"] --> B["Brush → Convex Face Polygons"]
     B --> C["World CSG: Inter-Brush Clipping"]
-    C --> D["Triangulation & UV Generation"]
+    C --> T12["Texture Resolution"]
+    T12 --> D["Triangulation & UV Generation"]
     D --> E["Material Merge"]
     E --> F["Spatial Cluster Generation"]
     F --> G["BVH Construction"]
@@ -53,6 +54,7 @@ flowchart TD
     click A "feature/01-map-parsing.md" "Map Parsing"
     click B "feature/02-brush-to-polygons.md" "Brush to Polygons"
     click C "feature/03-world-csg.md" "World CSG"
+    click T12 "feature/12-texture-resolution.md" "Texture Resolution"
     click D "feature/04-triangulation.md" "Triangulation & UVs"
     click E "feature/05-material-merge.md" "Material Merge"
     click F "feature/06-clustering.md" "Clustering"
@@ -63,7 +65,7 @@ flowchart TD
     click K "feature/11-web-application.md" "Web Application"
 ```
 
-Features 1–8 form the core compilation pipeline. Features 9–11 define the distribution artefacts that wrap the pipeline for consumption as a library, as a CLI, and as a browser application respectively. All compilation processing is offline; there are no real-time constraints on the compiler itself.
+Features 1–8 and 12 form the core compilation pipeline. Features 9–11 define the distribution artefacts that wrap the pipeline for consumption as a library, as a CLI, and as a browser application respectively. All compilation processing is offline; there are no real-time constraints on the compiler itself.
 
 ---
 
@@ -74,14 +76,15 @@ Features 1–8 form the core compilation pipeline. Features 9–11 define the di
 | 1 | [Map Parsing](feature/01-map-parsing.md) | `.map` file (Standard or Valve 220 text) | `ParsedEntity[]` |
 | 2 | [Brush → Polygons](feature/02-brush-to-polygons.md) | `ParsedBrush` | `ConvexPolygon[]` per brush |
 | 3 | [World CSG](feature/03-world-csg.md) | All `ConvexPolygon[]` | Clipped `ConvexPolygon[]` (no hidden faces) |
-| 4 | [Triangulation & UVs](feature/04-triangulation.md) | `ConvexPolygon[]`, `textureSizes` | `TriangulatedMesh` (vertices, indices, per-triangle material) |
+| 4 | [Triangulation & UVs](feature/04-triangulation.md) | `ConvexPolygon[]`, `TextureMap` | `TriangulatedMesh` (vertices, indices, per-triangle material) |
 | 5 | [Material Merge](feature/05-material-merge.md) | `TriangulatedMesh` | `MaterialBatch[]` |
 | 6 | [Clustering](feature/06-clustering.md) | `MaterialBatch[]` | `Cluster[]` |
 | 7 | [BVH Construction](feature/07-bvh-construction.md) | Worldspawn `Cluster[]` | `BVHNode[]` |
-| 8 | [glTF/GLB Export](feature/08-binary-export.md) | Worldspawn BVH + world/entity clusters | `.glb` file (glTF 2.0 Binary) |
+| 8 | [glTF/GLB Export](feature/08-binary-export.md) | Worldspawn BVH + world/entity clusters + `TextureMap` | `.glb` file (glTF 2.0 Binary) |
 | 9 | [npm Package](feature/09-npm-package.md) | Compiled source | Publishable npm package (library distribution + package metadata) |
 | 10 | [CLI Interface](feature/10-cli-interface.md) | npm package CLI entry point + `.map` path + CLI flags | `.glb` file on disk + terminal diagnostics |
 | 11 | [Web Application](feature/11-web-application.md) | npm package (library) | Single-page web app for in-browser conversion, BVH tree viewer, cluster highlighting, metadata panel |
+| 12 | [Texture Resolution](feature/12-texture-resolution.md) | Unique texture names, `TextureProvider` | `TextureMap` (texture name → `TextureInfo \| null`) |
 
 ---
 
@@ -157,6 +160,9 @@ interface AABB {
 │   │   ├── 06-clustering.ts
 │   │   ├── 07-bvh-construction.ts
 │   │   └── 08-binary-export.ts
+│   ├── providers/
+│   │   ├── node-texture-provider.ts   # TextureProvider for Node.js (image-size)
+│   │   └── browser-texture-provider.ts # TextureProvider for browsers (Image API)
 │   └── util/
 │       ├── diagnostics.ts        # Warning/error accumulator
 │       └── spatial-hash.ts       # Uniform grid for CSG acceleration
@@ -213,7 +219,8 @@ interface AABB {
 │       ├── 08-binary-export.md
 │       ├── 09-npm-package.md
 │       ├── 10-cli-interface.md
-│       └── 11-web-application.md
+│       ├── 11-web-application.md
+│       └── 12-texture-resolution.md
 ├── tsconfig.json
 ├── package.json
 └── README.md
@@ -273,6 +280,14 @@ The project uses **tsx** for development (zero-config TypeScript execution) and 
         ".": {
             "import": "./dist/compiler.js",
             "types": "./dist/compiler.d.ts"
+        },
+        "./node": {
+            "import": "./dist/providers/node-texture-provider.js",
+            "types": "./dist/providers/node-texture-provider.d.ts"
+        },
+        "./browser": {
+            "import": "./dist/providers/browser-texture-provider.js",
+            "types": "./dist/providers/browser-texture-provider.d.ts"
         }
     },
     "bin": { "map2gltf": "dist/index.js" },
@@ -299,6 +314,7 @@ The project uses **tsx** for development (zero-config TypeScript execution) and 
 | Package | Purpose | Type |
 |---------|---------|------|
 | `@gltf-transform/core` | GLB/glTF construction in Feature 8 | runtime |
+| `image-size` | Read PNG/JPEG dimensions for texture resolution ([Feature 12](feature/12-texture-resolution.md)) | runtime |
 | `tsx` | TypeScript execution during development | dev |
 | `vitest` | Test runner | dev |
 | `eslint` | Linting | dev |
@@ -309,7 +325,7 @@ The project uses **tsx** for development (zero-config TypeScript execution) and 
 | `three` | 3D preview renderer in the web application | dev (web) |
 | `@types/three` | TypeScript types for three.js | dev (web) |
 
-No other runtime dependencies for the core library. All math utilities (`vec3`, `plane`, `aabb`) and pipeline features are implemented from scratch — no external geometry or CSG libraries. The web application adds `three` (loaded client-side only) and `vite` as a build tool.
+No other runtime dependencies for the core library. All math utilities (`vec3`, `plane`, `aabb`) and pipeline features are implemented from scratch — no external geometry or CSG libraries. The web application adds `three` (loaded client-side only) and `vite` as a build tool. The `image-size` package is used only by the Node.js texture provider and is not required for browser builds.
 
 ---
 
@@ -329,6 +345,7 @@ import { mergeMaterials } from './pipeline/05-material-merge.js';
 import { clusterGeometry } from './pipeline/06-clustering.js';
 import { buildBVH } from './pipeline/07-bvh-construction.js';
 import { exportGLB } from './pipeline/08-binary-export.js';
+import { resolveTextures } from './pipeline/12-texture-resolution.js';
 
 export async function compile(mapSource: string, options: CompileOptions): Promise<Uint8Array> {
     const entities    = parseMap(mapSource);
@@ -363,7 +380,13 @@ export async function compile(mapSource: string, options: CompileOptions): Promi
         );
     }
 
-    const mesh        = triangulate(visiblePolygons, options.textureSizes);
+    // Resolve textures (Feature 12)
+    const textureNames = new Set(visiblePolygons.map(p => p.face.textureName));
+    const textureMap = options.textureProvider
+        ? await resolveTextures(textureNames, options.textureProvider, diagnostics)
+        : undefined;
+
+    const mesh        = triangulate(visiblePolygons, textureMap, options.defaultTextureSize);
     const batches     = mergeMaterials(mesh);
     const clusters    = clusterGeometry(batches, {
         gridCellSize: options.gridCellSize,
@@ -374,7 +397,7 @@ export async function compile(mapSource: string, options: CompileOptions): Promi
     const worldClusters = clusters.filter(cluster => cluster.isWorldspawn);
     const entityClusters = clusters.filter(cluster => !cluster.isWorldspawn);
     const bvh         = buildBVH(worldClusters);
-    const glb         = await exportGLB(batches, worldClusters, bvh, entityClusters, entities);
+    const glb         = await exportGLB(batches, worldClusters, bvh, entityClusters, entities, textureMap);
     return glb;
 }
 ```
@@ -423,13 +446,19 @@ export async function compile(mapSource: string, options: CompileOptions): Promi
         minClusterSize: number;      // default: 8
         bvhLeafThreshold: number;    // default: 4
         sahCandidates: number;       // default: 12
-        textureSizes: Map<string, [number, number]>; // texture name → [w, h]
+        textureProvider: TextureProvider | undefined;  // default: undefined (no texture resolution)
+        textureBasePath: string | undefined;           // default: undefined
+        skipWorldspawnClustering: boolean | undefined;  // default: false
     }
 
     const DEFAULT_OPTIONS: CompileOptions = { /* all defaults as listed above */ };
     ```
 
-    > **Implementation note — hardcoded parameters:** In the current implementation, pipeline features (02 through 07) use hardcoded constants for epsilon, seed extent, grid cell size, cluster limits, BVH thresholds, and SAH candidates rather than reading from `CompileOptions`. The `CompileOptions` interface is defined and accepted by `compile()`, but only `textureSizes` is actively threaded through to the pipeline. The remaining parameters serve as documentation of the chosen values and as API surface for future configurability.
+    > **Implementation note — `exactOptionalPropertyTypes`:** Because `tsconfig.json` enables `exactOptionalPropertyTypes: true`, optional fields in `CompileOptions` use `| undefined` in their type declaration (e.g. `textureProvider: TextureProvider | undefined`) rather than the `?:` syntax. This ensures callers can explicitly pass `undefined` while keeping the field required in the full `CompileOptions` type.
+
+    > **Implementation note — texture resolution:** The `textureProvider` and `textureBasePath` fields replace the previous `textureSizes: Map<string, [number, number]>`. The provider is invoked during the new texture resolution step ([Feature 12](feature/12-texture-resolution.md)) to build a `TextureMap` that is then consumed by triangulation ([Feature 4](feature/04-triangulation.md)) and binary export ([Feature 8](feature/08-binary-export.md)).
+
+    > **Implementation note — hardcoded parameters:** In the current implementation, pipeline features (02 through 07) use hardcoded constants for epsilon, seed extent, grid cell size, cluster limits, BVH thresholds, and SAH candidates rather than reading from `CompileOptions`. The `CompileOptions` interface is defined and accepted by `compile()`, but only `textureProvider`/`textureBasePath`, `defaultTextureSize`, clustering parameters, and `skipWorldspawnClustering` are actively threaded through to the pipeline. The remaining parameters serve as documentation of the chosen values and as API surface for future configurability.
 
 5. **No class hierarchies.** The codebase uses plain interfaces and functions. Geometry types (`Vec3`, `ConvexPolygon`, `Vertex`, etc.) are plain objects — no classes with methods, no inheritance. Utility operations are standalone functions in the `math/` module.
 
@@ -446,6 +475,7 @@ flowchart LR
     C --> S1["01-map-parsing"]
     C --> S2["02-brush-to-polygons"]
     C --> S3["03-world-csg"]
+    C --> S12["12-texture-resolution"]
     C --> S4["04-triangulation"]
     C --> S5["05-material-merge"]
     C --> S6["06-clustering"]
@@ -467,6 +497,11 @@ flowchart LR
     S7 --> M
     S8 --> T
     S8 --> GLTF["@gltf-transform/core"]
+    S12 --> T
+
+    CLI --> NTP["providers/node-texture-provider"]
+    CW --> BTP["providers/browser-texture-provider"]
+    NTP --> IS["image-size"]
 ```
 
 Dependencies flow strictly downward: pipeline features depend on `types` and `math`, never on each other. The only external runtime dependency for the core library is `@gltf-transform/core` used exclusively by Feature 8. The web application adds `three` for the 3D preview and consumes the core `compile()` function via a Web Worker.

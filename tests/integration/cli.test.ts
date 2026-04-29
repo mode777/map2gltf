@@ -94,6 +94,8 @@ describe('CLI execution', () => {
 
     it('should use compileWithDiagnostics in verbose mode and print diagnostics', async () => {
         const diagnostics = createDiagnostics();
+        diagnostics.info.push({ step: 'texture-resolution', message: 'brick resolved to brick.png' });
+        diagnostics.debug.push({ step: 'texture-resolution', message: 'debug trace' });
         diagnostics.warnings.push({ step: '04-triangulation', message: 'warning' });
         diagnostics.errors.push({ step: '07-bvh-construction', message: 'error' });
         const compileWithDiagnostics = vi.fn(async () => ({
@@ -109,6 +111,8 @@ describe('CLI execution', () => {
         expect(compileWithDiagnostics).toHaveBeenCalledWith('map source', {
             skipWorldspawnClustering: true,
         });
+        expect(stderr).toHaveBeenCalledWith('[INFO] [texture-resolution] brick resolved to brick.png');
+        expect(stderr).toHaveBeenCalledWith('[DEBUG] [texture-resolution] debug trace');
         expect(stderr).toHaveBeenCalledWith('[WARN] [04-triangulation] warning');
         expect(stderr).toHaveBeenCalledWith('[ERR] [07-bvh-construction] error');
     });

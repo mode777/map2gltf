@@ -1,9 +1,11 @@
 import { compileDetailed } from '../../src/compiler.js';
 import type { CompileOptions, CompileStats } from '../../src/compiler.js';
+import { BrowserTextureProvider } from '../../src/providers/browser-texture-provider.js';
 
 interface WorkerRequest {
     mapSource: string;
     options?: Partial<CompileOptions>;
+    textureBaseUrl?: string;
 }
 
 type WorkerResponse =
@@ -11,9 +13,13 @@ type WorkerResponse =
     | { type: 'error'; message: string };
 
 self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
-    const { mapSource, options } = event.data;
+    const { mapSource, options, textureBaseUrl } = event.data;
     try {
-        const { glb, stats } = await compileDetailed(mapSource, options);
+        const compileOptions: Partial<CompileOptions> = { ...options };
+        if (textureBaseUrl) {
+            compileOptions.textureProvider = new BrowserTextureProvider(textureBaseUrl);
+        }
+        const { glb, stats } = await compileDetailed(mapSource, compileOptions);
         (self as unknown as Worker).postMessage(
             { type: 'result', glb, stats } satisfies WorkerResponse,
             { transfer: [glb.buffer] },

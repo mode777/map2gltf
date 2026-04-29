@@ -34,6 +34,8 @@ describe('npm package verification', () => {
         const { glb, diagnostics } = await compileWithDiagnostics(source);
         expect(glb.length).toBeGreaterThan(12);
         expect(diagnostics).toBeDefined();
+        expect(Array.isArray(diagnostics.info)).toBe(true);
+        expect(Array.isArray(diagnostics.debug)).toBe(true);
         expect(Array.isArray(diagnostics.warnings)).toBe(true);
         expect(Array.isArray(diagnostics.errors)).toBe(true);
     });

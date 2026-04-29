@@ -68,56 +68,19 @@ Run Features 1–5 on `tests/fixtures/textured-room.map` (3+ distinct textures).
 ### Exported Function
 
 ```typescript
-// pipeline/05-material-merge.ts
 export function mergeMaterials(mesh: TriangulatedMesh): MaterialBatch[]
 ```
 
 ### Algorithm
 
-```typescript
-function mergeMaterials(mesh: TriangulatedMesh): MaterialBatch[] {
-    const { vertices, indices, triangleMaterials } = mesh;
+`mergeMaterials()`:
 
-    // 1. Collect unique texture names and assign sorted IDs
-    const uniqueNames = [...new Set(triangleMaterials)].sort();
-    const nameToID = new Map(uniqueNames.map((name, i) => [name, i]));
+1. Builds a stable material ID table from the unique texture names.
+2. Buckets triangles by material.
+3. Rebuilds compact vertex and index buffers per material batch using quantized vertex deduplication.
+4. Returns the batches sorted by `materialID`.
 
-    // 2. Bucket triangles by material
-    const buckets = new Map<number, { srcIndices: number[] }>();
-    for (let tri = 0; tri < triangleMaterials.length; tri++) {
-        const matID = nameToID.get(triangleMaterials[tri]!)!;
-        let bucket = buckets.get(matID);
-        if (!bucket) { bucket = { srcIndices: [] }; buckets.set(matID, bucket); }
-        bucket.srcIndices.push(
-            indices[tri * 3]!, indices[tri * 3 + 1]!, indices[tri * 3 + 2]!
-        );
-    }
-
-    // 3. Build deduplicated vertex/index buffers per material
-    const result: MaterialBatch[] = [];
-    for (const [matID, bucket] of buckets) {
-        const batchVertices: Vertex[] = [];
-        const batchIndices: number[] = [];
-        const dedupMap = new Map<string, number>();  // quantized key → index
-
-        for (const srcIdx of bucket.srcIndices) {
-            const v = vertices[srcIdx]!;
-            const key = quantizeVertex(v);  // snap to 1e-4 grid
-            let idx = dedupMap.get(key);
-            if (idx === undefined) {
-                idx = batchVertices.length;
-                batchVertices.push(v);
-                dedupMap.set(key, idx);
-            }
-            batchIndices.push(idx);
-        }
-
-        result.push({ materialID: matID, vertices: batchVertices, indices: batchIndices });
-    }
-
-    return result.sort((a, b) => a.materialID - b.materialID);
-}
-```
+Implementation reference: [src/pipeline/05-material-merge.ts](../../src/pipeline/05-material-merge.ts).
 
 ### Vertex Quantization Key
 

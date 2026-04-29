@@ -99,13 +99,9 @@ On `change`, read the selected file and pass it to the same `onFile` handler use
 
 Both input methods produce a `File` object. The file is read as text using `FileReader` (or `file.text()`):
 
-```typescript
-async function readMapFile(file: File): Promise<string> {
-    return file.text();
-}
-```
-
 The resulting string is posted to the Web Worker for compilation.
+
+Implementation reference: [web/src/main.ts](../../web/src/main.ts).
 
 ---
 
@@ -113,25 +109,16 @@ The resulting string is posted to the Web Worker for compilation.
 
 ### Worker Module
 
-```typescript
-// web/src/compiler-worker.ts
-import { compileDetailed } from '../../src/compiler.js';
+The worker:
 
-self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
-    const { mapSource, options } = event.data;
-    try {
-        const { glb, stats } = await compileDetailed(mapSource, options);
-        self.postMessage({ type: 'result', glb, stats } satisfies WorkerResponse, [glb.buffer]);
-    } catch (err) {
-        self.postMessage({
-            type: 'error',
-            message: err instanceof Error ? err.message : String(err)
-        } satisfies WorkerResponse);
-    }
-};
-```
+1. Receives `mapSource`, compile options, and optional `textureBaseUrl`.
+2. Constructs a `BrowserTextureProvider` inside the worker when texture lookup is enabled.
+3. Calls `compileDetailed()`.
+4. Posts either `{ type: 'result', glb, stats }` or `{ type: 'error', message }`, transferring the GLB buffer for zero-copy delivery.
 
-> **Implementation note:** The worker uses `compileDetailed()` (an internal function that exposes intermediate pipeline counts as `CompileStats`) rather than `compile()`, so that compilation statistics can be returned alongside the GLB without a second pass.
+> **Implementation note:** The worker uses `compileDetailed()` (an internal function that exposes intermediate pipeline counts as `CompileStats`) rather than `compile()`, so that compilation statistics can be returned alongside the GLB without a second pass. The `BrowserTextureProvider` is instantiated inside the worker when a `textureBaseUrl` is provided.
+
+Implementation reference: [web/src/compiler-worker.ts](../../web/src/compiler-worker.ts).
 
 ### Message Protocol
 
@@ -139,6 +126,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 interface WorkerRequest {
     mapSource: string;
     options?: Partial<CompileOptions>;
+    textureBaseUrl?: string;
 }
 
 type WorkerResponse =
@@ -148,7 +136,7 @@ type WorkerResponse =
 
 The GLB `Uint8Array` is transferred (not copied) via the `transfer` list in `postMessage` for zero-copy performance. The `stats` field is additive; consumers that only read `glb` are unaffected.
 
-For this feature set, `options` is expected to carry `skipWorldspawnClustering` from the checkbox state in the main thread. The checkbox label remains unchanged; only the option name and semantics changed.
+For this feature set, `options` is expected to carry `skipWorldspawnClustering` from the checkbox state in the main thread. When `textureBaseUrl` is provided, the worker creates a `BrowserTextureProvider` and sets it as the `textureProvider` compile option before calling `compileDetailed()`. The `textureBaseUrl` is kept separate from `options` because `TextureProvider` instances cannot be serialized across the `postMessage` boundary — they must be constructed inside the worker.
 
 ### Worker Lifecycle
 
@@ -261,25 +249,21 @@ The unchecked path changes only worldspawn clustering behavior. It must not coll
 ### ui.ts
 
 ```typescript
-// web/src/ui.ts
 export function showCompiling(fileName: string): void;
 export function showResult(glb: Uint8Array, fileName: string): void;
 export function showError(message: string): void;
 export function resetUI(): void;
 ```
 
+Implementation reference: [web/src/ui.ts](../../web/src/ui.ts).
+
 ### Download
 
 When compilation succeeds, create an Object URL from the GLB `Uint8Array` and set it as the `href` of the download link:
 
-```typescript
-const blob = new Blob([glb], { type: 'model/gltf-binary' });
-const url = URL.createObjectURL(blob);
-downloadLink.href = url;
-downloadLink.download = fileName.replace(/\.map$/, '.glb');
-```
-
 Revoke the previous Object URL when a new file is compiled to avoid memory leaks.
+
+Implementation reference: [web/src/main.ts](../../web/src/main.ts).
 
 ---
 
@@ -290,7 +274,6 @@ Revoke the previous Object URL when a new file is compiled to avoid memory leaks
 The preview uses **three.js** with `GLTFLoader` to render the compiled GLB in a `<canvas>` element. This provides immediate visual feedback without requiring the user to download and open the file in an external tool.
 
 ```typescript
-// web/src/preview.ts
 export function initPreview(canvas: HTMLCanvasElement): PreviewController;
 
 export interface PreviewController {
@@ -299,6 +282,8 @@ export interface PreviewController {
     dispose(): void;
 }
 ```
+
+Implementation reference: [web/src/preview.ts](../../web/src/preview.ts).
 
 The `loadGLB` return type is `Promise<THREE.Group>` so that `main.ts` can pass the scene to the BVH tree extractor and cluster highlighter after loading completes.
 
@@ -324,43 +309,15 @@ The renderer listens for `ResizeObserver` events on the canvas container and upd
 
 ## Vite Configuration
 
-```typescript
-// web/vite.config.ts
-import { defineConfig } from 'vite';
+The web build uses Vite with `web/` as the project root, `dist-web/` as the output directory, and ES module worker output.
 
-export default defineConfig({
-    root: 'web',
-    build: {
-        outDir: '../dist-web',
-        emptyOutDir: true,
-    },
-    worker: {
-        format: 'es',
-    },
-});
-```
+Implementation reference: [web/vite.config.ts](../../web/vite.config.ts).
 
 ### TypeScript Configuration (web)
 
-```jsonc
-// web/tsconfig.json
-{
-    "extends": "../tsconfig.json",
-    "compilerOptions": {
-        "lib": ["ES2022", "DOM", "DOM.Iterable"],
-        "module": "ESNext",
-        "moduleResolution": "Bundler",
-        "outDir": "../dist-web",
-        "rootDir": "src",
-        "declaration": false,
-        "declarationMap": false,
-        "sourceMap": true
-    },
-    "include": ["src"]
-}
-```
-
 The web tsconfig extends the root config but adds `DOM` lib types and uses bundler module resolution (required by Vite).
+
+Implementation reference: [web/tsconfig.json](../../web/tsconfig.json).
 
 ---
 
@@ -506,15 +463,9 @@ export function initClusterHighlighter(scene: THREE.Scene): ClusterHighlighter;
 
 A fixed palette of 12 visually distinct, high-saturation colors is used for cluster differentiation:
 
-```typescript
-const CLUSTER_COLORS = [
-    0xff4444, 0x44ff44, 0x4488ff, 0xffaa00,
-    0xff44ff, 0x44ffff, 0xff8844, 0x88ff44,
-    0x4444ff, 0xffff44, 0xff4488, 0x44ffaa,
-];
-```
-
 Colors cycle when more clusters are selected than palette entries.
+
+Implementation reference: [web/src/cluster-highlight.ts](../../web/src/cluster-highlight.ts).
 
 ### Material Swap Strategy
 

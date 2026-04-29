@@ -3,6 +3,7 @@ import { DEFAULT_OPTIONS, createDiagnostics } from './types.js';
 import { parseMap } from './pipeline/01-map-parsing.js';
 import { brushToPolygons } from './pipeline/02-brush-to-polygons.js';
 import { worldCSG } from './pipeline/03-world-csg.js';
+import { resolveTextures } from './pipeline/texture-resolution.js';
 import { triangulate } from './pipeline/04-triangulation.js';
 import { mergeMaterials } from './pipeline/05-material-merge.js';
 import { clusterGeometry } from './pipeline/06-clustering.js';
@@ -10,10 +11,10 @@ import { buildBVH } from './pipeline/07-bvh-construction.js';
 import { exportGLB } from './pipeline/08-binary-export.js';
 
 export type { CompileOptions, Diagnostics, CompileStats };
-export type { DiagnosticMessage } from './types.js';
+export type { DiagnosticMessage, TextureProvider, TextureInfo, TextureMap } from './types.js';
 
 function resolveOptions(partial?: Partial<CompileOptions>): CompileOptions {
-    if (!partial) return { ...DEFAULT_OPTIONS, textureSizes: new Map(DEFAULT_OPTIONS.textureSizes) };
+    if (!partial) return { ...DEFAULT_OPTIONS };
     return {
         epsilon: partial.epsilon ?? DEFAULT_OPTIONS.epsilon,
         seedExtent: partial.seedExtent ?? DEFAULT_OPTIONS.seedExtent,
@@ -24,7 +25,8 @@ function resolveOptions(partial?: Partial<CompileOptions>): CompileOptions {
         minClusterSize: partial.minClusterSize ?? DEFAULT_OPTIONS.minClusterSize,
         bvhLeafThreshold: partial.bvhLeafThreshold ?? DEFAULT_OPTIONS.bvhLeafThreshold,
         sahCandidates: partial.sahCandidates ?? DEFAULT_OPTIONS.sahCandidates,
-        textureSizes: partial.textureSizes ?? new Map(DEFAULT_OPTIONS.textureSizes),
+        textureProvider: partial.textureProvider ?? undefined,
+        textureBasePath: partial.textureBasePath ?? undefined,
         skipWorldspawnClustering: partial.skipWorldspawnClustering ?? DEFAULT_OPTIONS.skipWorldspawnClustering,
     };
 }
@@ -76,7 +78,8 @@ export async function compileWithDiagnostics(
         return { glb, diagnostics };
     }
 
-    const mesh = triangulate(visiblePolygons, opts.textureSizes, diagnostics, opts.defaultTextureSize);
+    const textureMap = await resolveTextures(visiblePolygons, opts.textureProvider, diagnostics);
+    const mesh = triangulate(visiblePolygons, textureMap, opts.defaultTextureSize);
     const batches = mergeMaterials(mesh);
     const clusters = clusterGeometry(batches, {
         gridCellSize: opts.gridCellSize,
@@ -87,7 +90,7 @@ export async function compileWithDiagnostics(
     const worldClusters = clusters.filter(cluster => cluster.isWorldspawn);
     const entityClusters = clusters.filter(cluster => !cluster.isWorldspawn);
     const bvh = buildBVH(worldClusters, { leafThreshold: opts.bvhLeafThreshold });
-    const glb = await exportGLB(batches, worldClusters, bvh, entityClusters, entities);
+    const glb = await exportGLB(batches, worldClusters, bvh, entityClusters, entities, textureMap);
     return { glb, diagnostics };
 }
 
@@ -160,7 +163,8 @@ export async function compileDetailed(
         return { glb, diagnostics, stats };
     }
 
-    const mesh = triangulate(visiblePolygons, opts.textureSizes, diagnostics, opts.defaultTextureSize);
+    const textureMap = await resolveTextures(visiblePolygons, opts.textureProvider, diagnostics);
+    const mesh = triangulate(visiblePolygons, textureMap, opts.defaultTextureSize);
     const batches = mergeMaterials(mesh);
     const clusters = clusterGeometry(batches, {
         gridCellSize: opts.gridCellSize,
@@ -171,7 +175,7 @@ export async function compileDetailed(
     const worldClusters = clusters.filter(cluster => cluster.isWorldspawn);
     const entityClusters = clusters.filter(cluster => !cluster.isWorldspawn);
     const bvh = buildBVH(worldClusters, { leafThreshold: opts.bvhLeafThreshold });
-    const glb = await exportGLB(batches, worldClusters, bvh, entityClusters, entities);
+    const glb = await exportGLB(batches, worldClusters, bvh, entityClusters, entities, textureMap);
     const compileTimeMs = performance.now() - startTime;
 
     const bvhLeafCount = bvh.filter(n => n.left === -1).length;

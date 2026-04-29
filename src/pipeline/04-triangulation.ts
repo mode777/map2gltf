@@ -1,10 +1,9 @@
-import type { ConvexPolygon, TriangulatedMesh, Vertex, Diagnostics } from '../types.js';
+import type { ConvexPolygon, TriangulatedMesh, Vertex, TextureMap } from '../types.js';
 import * as vec3 from '../math/vec3.js';
 
 export function triangulate(
     polygons: ConvexPolygon[],
-    textureSizes: Map<string, [number, number]>,
-    diagnostics?: Diagnostics,
+    textureMap: TextureMap,
     defaultTextureSize = 64,
 ): TriangulatedMesh {
     const vertices: Vertex[] = [];
@@ -18,14 +17,8 @@ export function triangulate(
     for (const poly of polygons) {
         const face = poly.face;
         const texKey = face.textureName.toLowerCase();
-        const size = textureSizes.get(texKey);
-        if (!size && diagnostics) {
-            diagnostics.warnings.push({
-                step: '04-triangulation',
-                message: `Texture '${face.textureName}' not found, using default ${defaultTextureSize}x${defaultTextureSize}`,
-            });
-        }
-        const [texW, texH] = size ?? defaultSize;
+        const info = textureMap.get(texKey);
+        const [texW, texH] = info?.size ?? defaultSize;
 
         const baseIndex = vertices.length;
 

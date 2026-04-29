@@ -291,7 +291,7 @@ describe('07-bvh-construction integration', () => {
             e.brushes.flatMap(b => brushToPolygons(b, brushIdx++)),
         );
         const allPolygons = [...clipped, ...entityPolys];
-        const mesh = triangulate(allPolygons, new Map(), diag);
+        const mesh = triangulate(allPolygons, new Map());
         const batches = mergeMaterials(mesh);
         const clusters = clusterGeometry(batches);
         const bvh = buildBVH(clusters);

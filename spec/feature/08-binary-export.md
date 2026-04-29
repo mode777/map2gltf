@@ -8,7 +8,7 @@
 
 Serialize all compiled data into a single **GLB** (glTF Binary) file. The worldspawn BVH is encoded as a glTF node hierarchy, worldspawn clusters map to world mesh primitives, and non-worldspawn entities are exported as independently identifiable meshes and nodes.
 
-**Input:** Material batches, worldspawn clusters, worldspawn BVH nodes, non-worldspawn entity clusters, and parsed entity metadata
+**Input:** Material batches, worldspawn clusters, worldspawn BVH nodes, non-worldspawn entity clusters, parsed entity metadata, and optional `TextureMap` (from [Feature 12](12-texture-resolution.md))
 **Output:** `.glb` file (glTF 2.0 Binary)
 
 **Primary code file:** `src/pipeline/08-binary-export.ts`
@@ -105,20 +105,70 @@ Each primitive specifies:
 
 ## Materials
 
-Each unique texture name from the `.map` file becomes a glTF material:
+Each unique texture name from the `.map` file becomes a glTF material. Material generation depends on whether the texture was resolved by the `TextureProvider` ([Feature 12](12-texture-resolution.md)).
+
+### Resolved Texture
+
+When a texture was successfully resolved, the material references the texture as an **external image** via `baseColorTexture`:
 
 ```json
 {
     "name": "brick_wall",
     "pbrMetallicRoughness": {
-        "baseColorFactor": [1, 1, 1, 1],
+        "baseColorTexture": {
+            "index": 0
+        },
         "metallicFactor": 0,
         "roughnessFactor": 1
     }
 }
 ```
 
-Materials are non-PBR placeholders. The renderer resolves texture names at load time; the glTF material `name` is the lookup key. If texture images are available at compile time, they may optionally be embedded as `baseColorTexture` in the GLB, but this is not required.
+With corresponding glTF **image** and **texture** entries:
+
+```json
+{
+    "images": [
+        { "name": "brick_wall.png", "mimeType": "image/png" }
+    ],
+    "textures": [
+        { "source": 0 }
+    ]
+}
+```
+
+Textures are **not embedded** in the GLB binary chunk — they remain external files referenced by name. This keeps the GLB small and allows texture sharing across multiple GLBs. Standard loaders (three.js `GLTFLoader`, Blender) resolve external URIs relative to the GLB file location.
+
+> **Implementation note — GLB image storage:** When `@gltf-transform/core` serializes a texture with `setURI(relativePath)` into GLB format, the URI is stored as the image's `name` property in the JSON chunk (not `uri`), because GLB images typically use embedded buffer views. The texture reference remains valid for consumers that read the image metadata.
+
+### Unresolved Texture (Placeholder)
+
+When a texture could not be resolved (or no `TextureMap` is provided), a **magenta placeholder** material is created:
+
+```json
+{
+    "name": "missing_texture_name",
+    "pbrMetallicRoughness": {
+        "baseColorFactor": [1, 0, 1, 1],
+        "metallicFactor": 0,
+        "roughnessFactor": 1
+    }
+}
+```
+
+This is visually distinct and signals that the texture is missing.
+
+### Texture Deduplication
+
+Multiple materials may reference the same texture file. glTF images and textures are deduplicated: if two materials use the same `relativePath`, they share the same image/texture index. The deduplication uses an internal `imageMap: Map<string, Texture>` keyed by `relativePath`.
+
+### Texture Lookup
+
+The texture name is looked up in the `TextureMap` using both the original case and lowercase:
+
+```typescript
+const texInfo = textureMap?.get(texName.toLowerCase()) ?? textureMap?.get(texName) ?? null;
+```
 
 ---
 
@@ -239,145 +289,40 @@ Run the full pipeline (Features 1–8) on a mixed fixture containing worldspawn 
 ### Exported Function
 
 ```typescript
-// pipeline/08-binary-export.ts
-import { Document, NodeIO } from '@gltf-transform/core';
-import type { MaterialBatch, Cluster, BVHNode, ParsedEntity } from '../types.js';
-
 export async function exportGLB(
     batches: MaterialBatch[],
     worldClusters: Cluster[],
     bvh: BVHNode[],
     entityClusters?: Cluster[],
-    entities?: ParsedEntity[]
+    entities?: ParsedEntity[],
+    textureMap?: TextureMap,
 ): Promise<Uint8Array>
 ```
 
 > **Implementation note — async:** `exportGLB` is `async` and returns `Promise<Uint8Array>` because `@gltf-transform/core`'s `NodeIO.writeBinary()` returns a Promise. This propagates up to `compile()` and `compileWithDiagnostics()`, making them async as well.
 
+> **Implementation note — textureMap parameter:** The `textureMap` parameter is optional. When omitted (or `undefined`), all materials fall back to the magenta placeholder `[1, 0, 1, 1]`. This preserves backward compatibility for callers that don't use texture resolution.
+
 > **Implementation note — AABB conversion:** When converting AABBs from Z-up to Y-up, the implementation converts all 8 corner points of the AABB and recomputes min/max, rather than simply swapping axes. This correctly handles the axis flip where min/max may swap.
 
 ### Algorithm
 
-```typescript
-function exportGLB(
-    batches: MaterialBatch[],
-    worldClusters: Cluster[],
-    bvh: BVHNode[],
-    entityClusters: Cluster[] = [],
-    entities: ParsedEntity[] = []
-): Uint8Array {
-    const doc = new Document();
-    doc.getRoot().getAsset().generator = 'map2gltf';
+`exportGLB()` performs six high-level steps:
 
-    const scene = doc.createScene('map');
-    const buf = doc.createBuffer();
+1. Create or reuse glTF materials for each material batch, attaching either a resolved texture or the magenta placeholder.
+2. Build the worldspawn BVH node hierarchy as glTF nodes.
+3. Attach meshes and primitives to BVH leaves.
+4. Wire BVH parent-child relationships.
+5. Export non-worldspawn entities as separate scene objects with identifying metadata.
+6. Serialize the assembled document to GLB with `NodeIO.writeBinary()`.
 
-    // 1. Create materials (one per batch, named by texture)
-    const materials = batches.map(b =>
-        doc.createMaterial(getTextureName(b.materialID))
-            .setBaseColorFactor([1, 1, 1, 1])
-            .setMetallicFactor(0)
-            .setRoughnessFactor(1)
-    );
-
-    // 2. Build worldspawn BVH node hierarchy.
-    const gltfNodes: GltfNode[] = [];
-    for (let ni = 0; ni < bvh.length; ni++) {
-        const bvhNode = bvh[ni]!;
-        const isLeaf = bvhNode.left === -1;
-        const gNode = doc.createNode(isLeaf ? `bvh_leaf_${ni}` : `bvh_${ni}`);
-
-        // Store AABB in extras (after coordinate conversion)
-        gNode.setExtras({
-            nodeType: isLeaf ? 'leaf' : 'interior',
-            aabb: convertAABB(bvhNode.bounds)
-        });
-
-        if (isLeaf && bvhNode.clusterCount > 0) {
-            const mesh = doc.createMesh(`mesh_${ni}`);
-            for (let ci = bvhNode.firstCluster; ci < bvhNode.firstCluster + bvhNode.clusterCount; ci++) {
-                const cluster = worldClusters[ci]!;
-                const prim = buildPrimitive(doc, buf, cluster, materials);
-                mesh.addPrimitive(prim);
-            }
-            gNode.setMesh(mesh);
-        }
-
-        gltfNodes.push(gNode);
-    }
-
-    // 3. Wire up parent-child relationships.
-    for (let ni = 0; ni < bvh.length; ni++) {
-        const bvhNode = bvh[ni]!;
-        if (bvhNode.left !== -1) {
-            gltfNodes[ni]!.addChild(gltfNodes[bvhNode.left]!);
-            gltfNodes[ni]!.addChild(gltfNodes[bvhNode.right]!);
-        }
-    }
-
-    // 4. Add worldspawn BVH root to scene.
-    if (gltfNodes.length > 0) {
-        scene.addChild(gltfNodes[0]!);
-    }
-
-    // 5. Export non-worldspawn entities as independently identifiable scene objects.
-    const byEntity = groupClustersByEntityIndex(entityClusters);
-    if (byEntity.size > 0) {
-        const entitiesGroup = doc.createNode('entities');
-        for (const [entityIndex, clustersForEntity] of byEntity) {
-            const entity = entities[entityIndex];
-            const classname = entity?.properties.classname;
-            const targetname = entity?.properties.targetname;
-            const baseName = classname ? `entity_${entityIndex}_${classname}` : `entity_${entityIndex}`;
-
-            const entityMesh = doc.createMesh(baseName);
-            for (const cluster of clustersForEntity) {
-                const prim = buildPrimitive(doc, buf, cluster, materials);
-                entityMesh.addPrimitive(prim);
-            }
-
-            entityMesh.setExtras({ entityIndex, classname, targetname });
-
-            const entityNode = doc.createNode(baseName)
-                .setMesh(entityMesh)
-                .setExtras({
-                    entityIndex,
-                    classname,
-                    targetname,
-                    aabb: convertAABB(mergeAABBs(clustersForEntity.map(cluster => cluster.bounds))),
-                });
-
-            entitiesGroup.addChild(entityNode);
-        }
-
-        scene.addChild(entitiesGroup);
-    }
-
-    // 6. Serialize to GLB.
-    const io = new NodeIO();
-    return io.writeBinary(doc);
-}
-```
+Implementation reference: [src/pipeline/08-binary-export.ts](../../src/pipeline/08-binary-export.ts).
 
 ### Coordinate Conversion (Z-up → Y-up)
 
-Rotate −90° around X on all positions and normals:
+Rotate −90° around X on all positions and normals, using the mapping `(x, y, z) → (x, z, -y)`. For AABBs, convert the corners and recompute min/max in the target basis rather than swapping axes in place.
 
-```typescript
-function convertVec3(v: Vec3): [number, number, number] {
-    return [v.x, v.z, -v.y];
-}
-
-function convertAABB(aabb: AABB): { min: number[], max: number[] } {
-    // After rotation, min/max may swap on Y/Z
-    const a = convertVec3(aabb.min);
-    const b = convertVec3(aabb.max);
-    return {
-        min: [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.min(a[2], b[2])],
-        max: [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.max(a[2], b[2])]
-    };
-}
-```
+Implementation reference: [src/pipeline/08-binary-export.ts](../../src/pipeline/08-binary-export.ts).
 
 ### Primitive Construction
 
