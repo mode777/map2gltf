@@ -22,6 +22,7 @@ describe('CLI parsing', () => {
     it('should parse and forward supported numeric flags', () => {
         const command = parseCliArgs([
             'input.map',
+            '--format', 'gltf',
             '--default-texture-size', '128',
             '--grid-cell-size', '32',
             '--max-cluster-size', '256',
@@ -38,6 +39,7 @@ describe('CLI parsing', () => {
             outputFile: 'out.glb',
             verbose: true,
             compileOptions: {
+                exportFormat: 'gltf',
                 defaultTextureSize: 128,
                 gridCellSize: 32,
                 maxClusterSize: 256,
@@ -63,6 +65,11 @@ describe('CLI parsing', () => {
     it('should reject invalid numeric values', () => {
         expect(() => parseCliArgs(['input.map', '--grid-cell-size', 'nope']))
             .toThrow('Invalid value for --grid-cell-size: nope');
+    });
+
+    it('should reject invalid export formats', () => {
+        expect(() => parseCliArgs(['input.map', '--format', 'obj']))
+            .toThrow('Invalid value for --format: obj');
     });
 });
 
@@ -90,6 +97,31 @@ describe('CLI execution', () => {
             bvhLeafThreshold: 8,
         });
         expect(writeFile).toHaveBeenCalledWith('D:/resolved/input.glb', expect.any(Uint8Array));
+    });
+
+    it('should write .gltf by default when format is gltf', async () => {
+        const compile = vi.fn(async () => new TextEncoder().encode('{"asset":{"version":"2.0"}}'));
+        const writeFile = vi.fn();
+        const runtime = createRuntime({ compile, writeFile });
+
+        const exitCode = await runCli(['input.map', '--format', 'gltf'], runtime);
+
+        expect(exitCode).toBe(0);
+        expect(compile).toHaveBeenCalledWith('map source', { exportFormat: 'gltf' });
+        expect(writeFile).toHaveBeenCalledWith('D:/resolved/input.gltf', expect.any(Uint8Array));
+    });
+
+    it('should derive textureBasePath relative to the output asset', async () => {
+        const compile = vi.fn(async () => new Uint8Array([1, 2, 3]));
+        const runtime = createRuntime({ compile });
+
+        const exitCode = await runCli(['input.map', '--texture-path', './textures', '--format', 'gltf'], runtime);
+
+        expect(exitCode).toBe(0);
+        expect(compile).toHaveBeenCalledWith('map source', expect.objectContaining({
+            exportFormat: 'gltf',
+            textureBasePath: 'textures',
+        }));
     });
 
     it('should use compileWithDiagnostics in verbose mode and print diagnostics', async () => {

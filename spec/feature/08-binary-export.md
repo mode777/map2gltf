@@ -6,10 +6,10 @@
 
 ## Overview
 
-Serialize all compiled data into a single **GLB** (glTF Binary) file. The worldspawn BVH is encoded as a glTF node hierarchy, worldspawn clusters map to world mesh primitives, and non-worldspawn entities are exported as independently identifiable meshes and nodes.
+Serialize all compiled data into either a **GLB** (glTF Binary) file or a text-based **glTF** (`.gltf`) file. The worldspawn BVH is encoded as a glTF node hierarchy, worldspawn clusters map to world mesh primitives, and non-worldspawn entities are exported as independently identifiable meshes and nodes.
 
 **Input:** Material batches, worldspawn clusters, worldspawn BVH nodes, non-worldspawn entity clusters, parsed entity metadata, and optional `TextureMap` (from [Feature 12](12-texture-resolution.md))
-**Output:** `.glb` file (glTF 2.0 Binary)
+**Output:** `.glb` or `.gltf` file (glTF 2.0)
 
 **Primary code file:** `src/pipeline/08-binary-export.ts`
 
@@ -129,7 +129,7 @@ With corresponding glTF **image** and **texture** entries:
 ```json
 {
     "images": [
-        { "name": "brick_wall.png", "mimeType": "image/png" }
+        { "uri": "textures/brick_wall.png", "mimeType": "image/png" }
     ],
     "textures": [
         { "source": 0 }
@@ -137,9 +137,9 @@ With corresponding glTF **image** and **texture** entries:
 }
 ```
 
-Textures are **not embedded** in the GLB binary chunk — they remain external files referenced by name. This keeps the GLB small and allows texture sharing across multiple GLBs. Standard loaders (three.js `GLTFLoader`, Blender) resolve external URIs relative to the GLB file location.
+Textures are **never embedded** in either `.gltf` or `.glb` output. They remain external files referenced by a relative `images[].uri`. This keeps the serialized asset smaller and allows texture sharing across multiple outputs. Standard loaders (three.js `GLTFLoader`, Blender) resolve those URIs relative to the `.gltf` or `.glb` file location.
 
-> **Implementation note — GLB image storage:** When `@gltf-transform/core` serializes a texture with `setURI(relativePath)` into GLB format, the URI is stored as the image's `name` property in the JSON chunk (not `uri`), because GLB images typically use embedded buffer views. The texture reference remains valid for consumers that read the image metadata.
+> **Implementation note — URI patching:** `@gltf-transform/core` serializes URI-backed textures as `images[].name` rather than `images[].uri`. The exporter patches the emitted JSON for both `.gltf` and `.glb` so that resolved textures always end up as explicit external `images[].uri` entries.
 
 ### Unresolved Texture (Placeholder)
 
@@ -160,7 +160,7 @@ This is visually distinct and signals that the texture is missing.
 
 ### Texture Deduplication
 
-Multiple materials may reference the same texture file. glTF images and textures are deduplicated: if two materials use the same `relativePath`, they share the same image/texture index. The deduplication uses an internal `imageMap: Map<string, Texture>` keyed by `relativePath`.
+Multiple materials may reference the same texture file. glTF images and textures are deduplicated: if two materials use the same exported URI, they share the same image/texture index. The deduplication uses an internal `imageMap: Map<string, Texture>` keyed by the final URI after `textureBasePath` has been applied.
 
 ### Texture Lookup
 
@@ -174,7 +174,7 @@ const texInfo = textureMap?.get(texName.toLowerCase()) ?? textureMap?.get(texNam
 
 ## Buffer Layout
 
-All binary data is packed into a **single GLB buffer** (the BIN chunk). Buffer views are created for each data type:
+All geometry data is packed into a **single glTF buffer**. In GLB output this becomes the BIN chunk. In text glTF output the same buffer is embedded into `buffers[0].uri` as a base64 data URI. Buffer views are created for each data type:
 
 | BufferView | Target | Contents |
 |------------|--------|----------|
@@ -205,6 +205,24 @@ Non-worldspawn entities are exported outside the worldspawn BVH as first-class s
 The output is a single `.glb` file following the glTF 2.0 Binary container spec:
 
 ```
+
+## Text glTF File Structure
+
+When `format = 'gltf'`, the exporter writes UTF-8 JSON rather than a GLB container. The node tree, meshes, materials, accessors, and buffer views are identical to the GLB representation, but only the geometry buffer is stored inline as a data URI:
+
+```json
+{
+    "asset": { "version": "2.0" },
+    "buffers": [
+        {
+            "byteLength": 1234,
+            "uri": "data:application/octet-stream;base64,AAAA..."
+        }
+    ]
+}
+```
+
+This keeps `.gltf` export single-file for geometry while keeping textures external through relative `images[].uri` references.
 ┌──────────────────────────────┐
 │ GLB Header (12 bytes)        │
 │   magic: 0x46546C67 "glTF"  │
@@ -277,6 +295,8 @@ The node tree → flat array conversion is O(N) where N is the number of BVH nod
 12. **One node per entity:** Assert each entity mesh is referenced by exactly one entity node.
 13. **Entity metadata:** Assert entity nodes and/or meshes preserve `entityIndex`, `classname`, and `targetname` where available.
 14. **World/entity separation:** Assert worldspawn BVH leaf meshes do not contain non-worldspawn entity geometry.
+15. **Text glTF export:** Export with `format = 'gltf'`. Assert the output decodes as valid JSON, `asset.version` is `"2.0"`, `buffers[0].uri` starts with `data:application/octet-stream;base64,`, and resolved textures use relative `images[].uri` values rather than embedded data URIs.
+16. **GLB external textures:** Export with `format = 'glb'` and a resolved texture. Assert the JSON chunk contains `images[].uri` for the texture and does not contain `images[].bufferView`.
 
 ### Integration Smoke Test
 
@@ -289,17 +309,21 @@ Run the full pipeline (Features 1–8) on a mixed fixture containing worldspawn 
 ### Exported Function
 
 ```typescript
-export async function exportGLB(
+export async function exportScene(
     batches: MaterialBatch[],
     worldClusters: Cluster[],
     bvh: BVHNode[],
     entityClusters?: Cluster[],
     entities?: ParsedEntity[],
     textureMap?: TextureMap,
+    format?: 'glb' | 'gltf',
+    textureBasePath?: string,
 ): Promise<Uint8Array>
 ```
 
-> **Implementation note — async:** `exportGLB` is `async` and returns `Promise<Uint8Array>` because `@gltf-transform/core`'s `NodeIO.writeBinary()` returns a Promise. This propagates up to `compile()` and `compileWithDiagnostics()`, making them async as well.
+> **Implementation note — async:** `exportScene` is `async` and returns `Promise<Uint8Array>` because `@gltf-transform/core`'s `NodeIO.writeBinary()` / `writeJSON()` APIs return Promises. This propagates up to `compile()` and `compileWithDiagnostics()`, making them async as well.
+
+> **Implementation note — compatibility wrapper:** The file also keeps an `exportGLB()` helper that delegates to `exportScene(..., 'glb', textureBasePath)` for callers that only need binary output.
 
 > **Implementation note — textureMap parameter:** The `textureMap` parameter is optional. When omitted (or `undefined`), all materials fall back to the magenta placeholder `[1, 0, 1, 1]`. This preserves backward compatibility for callers that don't use texture resolution.
 
@@ -307,14 +331,16 @@ export async function exportGLB(
 
 ### Algorithm
 
-`exportGLB()` performs six high-level steps:
+`exportScene()` performs seven high-level steps:
 
 1. Create or reuse glTF materials for each material batch, attaching either a resolved texture or the magenta placeholder.
 2. Build the worldspawn BVH node hierarchy as glTF nodes.
 3. Attach meshes and primitives to BVH leaves.
 4. Wire BVH parent-child relationships.
 5. Export non-worldspawn entities as separate scene objects with identifying metadata.
-6. Serialize the assembled document to GLB with `NodeIO.writeBinary()`.
+6. When resolved textures exist, compute each exported texture URI by joining `textureBasePath` and `TextureInfo.relativePath`, validating that the result remains a relative URI.
+7. When `format = 'gltf'`, serialize with `NodeIO.writeJSON()`, inline only the primary geometry buffer as a base64 data URI, and patch image entries so they use external `images[].uri` references.
+8. Otherwise serialize the assembled document to GLB with `NodeIO.writeBinary()` and patch the JSON chunk so it also uses external `images[].uri` references rather than embedded image buffer views or `name` placeholders.
 
 Implementation reference: [src/pipeline/08-binary-export.ts](../../src/pipeline/08-binary-export.ts).
 

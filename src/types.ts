@@ -24,6 +24,7 @@ export interface TextureProvider {
 }
 
 export type TextureMap = Map<string, TextureInfo | null>;
+export type ExportFormat = 'glb' | 'gltf';
 
 export interface CompileOptions {
     readonly epsilon: number;
@@ -35,6 +36,7 @@ export interface CompileOptions {
     readonly minClusterSize: number;
     readonly bvhLeafThreshold: number;
     readonly sahCandidates: number;
+    readonly exportFormat: ExportFormat;
     readonly textureProvider?: TextureProvider | undefined;
     readonly textureBasePath?: string | undefined;
     readonly skipWorldspawnClustering: boolean;
@@ -50,6 +52,7 @@ export const DEFAULT_OPTIONS: CompileOptions = {
     minClusterSize: 24,
     bvhLeafThreshold: 4,
     sahCandidates: 12,
+    exportFormat: 'glb',
     skipWorldspawnClustering: false,
 };
 

@@ -74,9 +74,9 @@ describe('08-binary-export materials', () => {
         // Should have a baseColorTexture referencing a texture index
         expect(mat.pbrMetallicRoughness?.baseColorTexture).toBeDefined();
         const texIdx = mat.pbrMetallicRoughness!.baseColorTexture!.index;
-        // The texture should reference an image with our name
+        // The texture should reference an image with our external URI.
         const imgIdx = json.textures![texIdx]!.source;
-        expect(json.images![imgIdx!]!.name).toBe('brick.png');
+        expect(json.images![imgIdx!]!.uri).toBe('brick.png');
         expect(json.images![imgIdx!]!.mimeType).toBe('image/png');
     });
 
@@ -129,8 +129,21 @@ describe('08-binary-export materials', () => {
 
         // Only one image entry despite two materials referencing the same texture
         expect(json.images).toHaveLength(1);
-        expect(json.images![0]!.name).toBe('brick.png');
+        expect(json.images![0]!.uri).toBe('brick.png');
         expect(json.textures).toHaveLength(1);
+    });
+
+    it('should prefix exported texture URIs with the asset-relative texture base path', async () => {
+        const textureMap: TextureMap = new Map([
+            ['brick', { relativePath: 'brick.png', size: [128, 128] }],
+        ]);
+
+        const glb = await exportGLB([makeBatch(0, 'brick')], [makeCluster(0)], defaultBVH, [], defaultEntities, textureMap, 'textures');
+        const json = extractGLBJson(glb) as any;
+
+        expect(json.images).toHaveLength(1);
+        expect(json.images![0]!.uri).toBe('textures/brick.png');
+        expect(json.images![0]!.bufferView).toBeUndefined();
     });
 
     it('should handle mixed resolved and unresolved textures', async () => {

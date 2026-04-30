@@ -172,12 +172,12 @@ interface CompileOptions {
     readonly defaultTextureSize: number;            // retained — fallback for unresolved textures
     // REMOVED: textureSizes: Map<string, [number, number]>
     readonly textureProvider?: TextureProvider | undefined;  // NEW
-    readonly textureBasePath?: string | undefined;           // NEW
+    readonly textureBasePath?: string | undefined;           // NEW: asset-relative URI prefix used during export
 }
 ```
 
 * **`textureProvider`** is optional. When omitted, all textures fall back to `defaultTextureSize` and get placeholder materials (backward-compatible).
-* **`textureBasePath`** is a convenience for the built-in providers. The CLI derives it from `--texture-path`. The web app derives it from user configuration.
+* **`textureBasePath`** is an asset-relative URI prefix applied during export. The CLI derives it from `--texture-path` and the final output location. Browser callers may provide it directly when they know where the exported asset will live relative to the texture files.
 
 ---
 
@@ -187,7 +187,7 @@ The orchestrator (`src/compiler.ts`) wires the new step between CSG and triangul
 
 1. Resolve textures after filtering visible polygons.
 2. Pass the resulting `TextureMap` into triangulation for UV scale lookup.
-3. Pass the same `TextureMap` into binary export for material generation.
+3. Pass the same `TextureMap` and `textureBasePath` into binary export for material generation and external texture URI construction.
 
 The `TextureProvider`, `TextureInfo`, and `TextureMap` types are re-exported from `compiler.ts` for library consumers.
 
@@ -218,7 +218,7 @@ src/
 | **`compile()` without a provider** | Non-breaking. Behaves like before — `defaultTextureSize` used, placeholder materials emitted. |
 | **`triangulate()` signature change** | Internal API — not part of the public surface. |
 | **`exportGLB()` signature change** | Internal API — not part of the public surface. |
-| **GLB output changes** | Materials now reference external textures when resolved. The material `name` is preserved for consumers that used it for texture lookup. |
+| **GLB output changes** | Materials now reference external textures through `images[].uri` when resolved. Textures are never embedded in `.glb` or `.gltf`. |
 
 ---
 
@@ -241,15 +241,15 @@ src/
 
 ### Unit Tests — GLB Material Generation
 
-1. **Resolved material:** Export with a resolved texture. Assert the output glTF JSON contains an `image` with the expected name, a `texture` referencing it, and a material with `baseColorTexture`.
+1. **Resolved material:** Export with a resolved texture. Assert the output glTF JSON contains an `image` with the expected relative `uri`, a `texture` referencing it, and a material with `baseColorTexture`.
 2. **Placeholder material:** Export with an unresolved texture. Assert the material has `baseColorFactor: [1, 0, 1, 1]` and no `baseColorTexture`.
 3. **No textureMap:** Export with `textureMap` undefined. Assert materials use magenta placeholder.
 4. **Texture deduplication:** Two materials referencing the same texture. Assert only one glTF image/texture entry.
 5. **Mixed:** Export with both resolved and unresolved textures. Assert correct material types for each.
 
-> **Implementation note — GLB texture inspection:** The glTF JSON inside a GLB stores external texture references with a `name` property (set by `@gltf-transform/core`), not a `uri`, because GLB images typically use buffer views. Tests should extract the raw JSON chunk from the GLB binary and inspect `images[].name` rather than `images[].uri`. The raw JSON chunk can be extracted by reading the GLB header: skip 12-byte header, read 4-byte JSON chunk length, skip 4-byte chunk type, decode the JSON bytes.
+> **Implementation note — GLB texture inspection:** The exporter post-processes the GLB JSON chunk so that external textures appear as `images[].uri`. Tests should extract the raw JSON chunk from the GLB binary and inspect `images[].uri` rather than `images[].name`.
 
 ### Integration Tests
 
-1. Run the full pipeline with `--texture-path` pointing to a directory containing matching PNGs. Assert the output GLB contains texture-referencing materials.
+1. Run the full pipeline with `--texture-path` pointing to a directory containing matching PNGs. Assert the output GLB contains texture-referencing materials and relative `images[].uri` values.
 2. Run without `--texture-path`. Assert all materials are magenta placeholders.

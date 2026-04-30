@@ -6,10 +6,10 @@
 
 ## Overview
 
-Provide a Node.js command-line interface that wraps the library from [Feature 9](09-npm-package.md), reads a `.map` file from disk, invokes the compiler, and writes a `.glb` file to disk. The CLI is a thin shell around the library rather than a separate compilation path.
+Provide a Node.js command-line interface that wraps the library from [Feature 9](09-npm-package.md), reads a `.map` file from disk, invokes the compiler, and writes either a `.glb` or `.gltf` file to disk. The CLI is a thin shell around the library rather than a separate compilation path.
 
 **Input:** CLI arguments (`process.argv`), an input `.map` file path, and the npm package runtime from [Feature 9](09-npm-package.md)
-**Output:** `.glb` file written to disk, optional diagnostics on stderr, and process exit status
+**Output:** `.glb` or `.gltf` file written to disk, optional diagnostics on stderr, and process exit status
 
 **Primary code file:** `src/index.ts`
 
@@ -25,7 +25,8 @@ The CLI is installed as the `map2gltf` binary via the package manifest's `bin` f
 Usage: map2gltf <input.map> [options]
 
 Options:
-  -o, --output <file>        Output .glb path (default: <input>.glb)
+  -o, --output <file>        Output path (default: <input>.glb or <input>.gltf)
+  --format <glb|gltf>        Output format (default: glb)
   --default-texture-size <n> Default texture dimensions (default: 64)
   --grid-cell-size <n>       Clustering grid cell size (default: 16)
   --max-cluster-size <n>     Max triangles per cluster (default: 512)
@@ -46,13 +47,14 @@ The current implementation actively handles these options:
 | Flag | Behaviour |
 |------|-----------|
 | `-o`, `--output <file>` | Sets the output path |
+| `--format <glb|gltf>` | Sets `exportFormat` and changes the default output extension when `-o` is omitted |
 | `--default-texture-size <n>` | Sets `defaultTextureSize` |
 | `--grid-cell-size <n>` | Sets `gridCellSize` |
 | `--max-cluster-size <n>` | Sets `maxClusterSize` |
 | `--min-cluster-size <n>` | Sets `minClusterSize` |
 | `--bvh-leaf-threshold <n>` | Sets `bvhLeafThreshold` |
 | `--no-clustering` | Sets `skipWorldspawnClustering: true` |
-| `--texture-path <dir>` | Creates a `NodeTextureProvider` with the given directory and sets it as `textureProvider` on `CompileOptions` |
+| `--texture-path <dir>` | Creates a `NodeTextureProvider` with the given directory, sets it as `textureProvider`, and derives `textureBasePath` relative to the final output asset |
 | `-v`, `--verbose` | Switches from `compile()` to `compileWithDiagnostics()` |
 | `-h`, `--help` | Prints usage and exits `0` |
 
@@ -68,7 +70,7 @@ Unrecognized dash-prefixed arguments are rejected with `Error: Unknown option <f
 
 ### Output Path Resolution
 
-If `-o` / `--output` is provided, that value is used as the output path. Otherwise the CLI resolves the input path to an absolute path and then applies `inputPath.replace(/\.map$/i, '.glb')`. If the resolved path does not end in `.map`, the output path is left unchanged by that replacement.
+If `-o` / `--output` is provided, that value is used as the output path. Otherwise the CLI resolves the input path to an absolute path and then applies `inputPath.replace(/\.map$/i, '.glb')` for the default format or `inputPath.replace(/\.map$/i, '.gltf')` when `--format gltf` is selected. If the resolved path does not end in `.map`, the output path is left unchanged by that replacement.
 
 ---
 
@@ -81,8 +83,10 @@ If `-o` / `--output` is provided, that value is used as the output path. Otherwi
 3. Parse recognized flags and their required values, rejecting unsupported options and missing values.
 4. Resolve the input path and read the `.map` source with `fs.readFileSync(..., 'utf-8')`.
 5. Invoke either `compile()` or `compileWithDiagnostics()` from the library, depending on `--verbose`, forwarding the parsed `CompileOptions` overrides.
-6. Write the resulting GLB bytes to disk with `fs.writeFileSync()`.
+6. Write the resulting serialized bytes to disk with `fs.writeFileSync()`.
 7. Print `Wrote <outputPath>` to stdout and exit with status `0`.
+
+When `--format gltf` is selected, the CLI still writes a single file. The emitted `.gltf` JSON embeds only the geometry buffer as a base64 data URI, so no companion `.bin` file is required. Resolved textures remain external files referenced through relative `images[].uri` values.
 
 ### Verbose Mode
 
@@ -104,7 +108,7 @@ The location suffix is included only when present in the diagnostic record.
 The CLI forwards numeric overrides directly into the compiler options object:
 
 - `--default-texture-size <n>` controls the fallback texture dimensions used by [Feature 4](04-triangulation.md) when a texture is unresolved in the `TextureMap`.
-- `--texture-path <dir>` creates a `NodeTextureProvider` (from [Feature 12](12-texture-resolution.md)) that looks for textures as `<dir>/<name>.png`. When omitted, no provider is used and all textures receive the default size and magenta placeholder materials.
+- `--texture-path <dir>` creates a `NodeTextureProvider` (from [Feature 12](12-texture-resolution.md)) that looks for textures as `<dir>/<name>.png`. The CLI also derives `textureBasePath` relative to the final output file so exported textures use valid relative URIs such as `textures/brick.png` or `../shared/textures/brick.png`. When omitted, no provider is used and all textures receive the default size and magenta placeholder materials.
 - `--grid-cell-size <n>`, `--max-cluster-size <n>`, and `--min-cluster-size <n>` flow through to [Feature 6](06-clustering.md).
 - `--bvh-leaf-threshold <n>` controls the leaf cutoff used by [Feature 7](07-bvh-construction.md).
 
@@ -122,6 +126,7 @@ The CLI reports operational failures as human-readable terminal errors and exits
 | Arguments provided but no parsed input file | Print `Error: No input file specified`, exit `1` |
 | Multiple positional input files | Print `Error: Multiple input files provided`, exit `1` |
 | Missing required option value | Print `Error: Missing value for <flag>`, exit `1` |
+| Invalid `--format` value | Print `Error: Invalid value for --format: <value>`, exit `1` |
 | Invalid numeric option value | Print `Error: Invalid value for <flag>: <value>`, exit `1` |
 | File read/write failure | Print `Error: <message>`, exit `1` |
 | Compiler exception | Print `Error: <message>`, exit `1` |
@@ -146,15 +151,20 @@ The CLI does not attempt recovery after a fatal error. Library diagnostics remai
 8. **Unknown option handling:** Invoke the CLI with `--unknown-flag`. Assert the CLI exits with status `1` and prints an `Unknown option` message.
 9. **Duplicate positional input:** Invoke the CLI with two input files. Assert the CLI exits with status `1`.
 10. **Missing option value:** Invoke the CLI with `--output` or `--grid-cell-size` and no following value. Assert the CLI exits with status `1` and prints a clear error.
+11. **Text glTF default path:** Invoke the CLI with `--format gltf` and no `-o`. Assert the output path defaults to `<input>.gltf`.
+12. **Invalid format option:** Invoke the CLI with `--format obj`. Assert the CLI exits with status `1` and prints `Invalid value for --format`.
+13. **Relative texture URI derivation:** Invoke the CLI with `--texture-path`. Assert the forwarded `textureBasePath` is relative to the resolved output asset location.
 
 ### Integration Test
 
 Execute the built `map2gltf` binary against `tests/fixtures/hollow-room.map`. Assert a `.glb` file is written, the process exits with status `0`, and the output is structurally valid as defined by the Feature 8 export tests.
 
+Execute the built `map2gltf` binary against the same fixture with `--format gltf`. Assert a `.gltf` file is written, the process exits with status `0`, the output parses as valid JSON with an inlined buffer data URI, and resolved textures use relative `images[].uri` references.
+
 Run the CLI with `--bvh-leaf-threshold 8` on a fixture that normally produces a split BVH. Assert the emitted stats or derived structure reflect the larger threshold.
 
 Run the CLI with `--default-texture-size 128` on a map with unresolved textures in verbose mode. Assert diagnostics report `128x128` fallback behaviour.
-Run the CLI with `--texture-path ./textures` pointing to a directory containing matching PNGs. Assert the output GLB contains texture-referencing materials rather than magenta placeholders.
+Run the CLI with `--texture-path ./textures` pointing to a directory containing matching PNGs. Assert the output GLB contains texture-referencing materials rather than magenta placeholders, and that the resolved image URIs are relative to the output asset.
 ---
 
 ## Implementation

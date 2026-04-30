@@ -1,8 +1,8 @@
 # map2gltf
 
-Quake `.map` → glTF 2.0 Binary (`.glb`) compiler written in TypeScript.
+Quake `.map` → glTF 2.0 (`.glb` or `.gltf`) compiler written in TypeScript.
 
-Reads Standard and Valve 220 format `.map` files (as exported by TrenchBroom) and produces optimised `.glb` files ready for GPU frustum culling.
+Reads Standard and Valve 220 format `.map` files (as exported by TrenchBroom) and produces optimised glTF output ready for GPU frustum culling.
 
 ## Features
 
@@ -16,7 +16,7 @@ Reads Standard and Valve 220 format `.map` files (as exported by TrenchBroom) an
 ## Pipeline
 
 ```
-.map parse → brush→polygons → world CSG → triangulation → material merge → clustering → BVH → GLB
+.map parse → brush→polygons → world CSG → triangulation → material merge → clustering → BVH → glTF
 ```
 
 Each step is a pure function with no shared mutable state. Only `@gltf-transform/core` is a runtime dependency; all math and CSG are implemented from scratch.
@@ -40,7 +40,7 @@ const glb = await compile(mapSource);
 // With diagnostics and options
 const { glb, diagnostics } = await compileWithDiagnostics(mapSource, {
     defaultTextureSize: 128,
-    textureSizes: new Map([['brick_wall', [256, 256]]]),
+    exportFormat: 'gltf',
 });
 
 for (const w of diagnostics.warnings) {
@@ -63,6 +63,9 @@ npx map2gltf input.map -v
 # Override fallback UV dimensions for unresolved textures
 npx map2gltf input.map --default-texture-size 128
 
+# Emit text glTF instead of GLB
+npx map2gltf input.map --format gltf
+
 # Tune clustering and BVH generation
 npx map2gltf input.map --grid-cell-size 32 --max-cluster-size 256 --min-cluster-size 16 --bvh-leaf-threshold 8
 
@@ -74,7 +77,8 @@ Supported CLI options:
 
 | Flag | Description |
 |------|-------------|
-| `-o`, `--output <file>` | Write the output GLB to an explicit path |
+| `-o`, `--output <file>` | Write the output file to an explicit path |
+| `--format <glb|gltf>` | Choose binary GLB or text glTF output |
 | `--default-texture-size <n>` | Use `<n>x<n>` as the UV fallback size when a texture is missing from `textureSizes` |
 | `--grid-cell-size <n>` | Override the worldspawn clustering grid cell size |
 | `--max-cluster-size <n>` | Override the maximum worldspawn cluster size |
@@ -89,6 +93,7 @@ CLI contract:
 - Exactly one positional input file is accepted.
 - Unknown options are rejected.
 - Options that require values fail fast when the value is missing or not a positive integer.
+- `--format gltf` writes a single `.gltf` JSON file with the geometry buffer embedded as a base64 data URI.
 - `--default-texture-size` changes fallback UV normalization only; it does not load texture metadata from disk.
 
 ## Web Application
@@ -102,7 +107,7 @@ npm run build:web    # production build
 
 ## glTF Output Structure
 
-The output is a standard glTF 2.0 Binary file. Any compliant viewer (Blender, VS Code glTF Tools, three.js) can open it. The BVH and cluster metadata are stored in the `extras` fields described below.
+The output is standard glTF 2.0. By default the compiler emits a `.glb`, and `exportFormat: 'gltf'` / `--format gltf` emits a text `.gltf` with the geometry buffer embedded as a data URI. Any compliant viewer (Blender, VS Code glTF Tools, three.js) can open it. The BVH and cluster metadata are stored in the `extras` fields described below.
 
 ### Node Hierarchy (BVH)
 

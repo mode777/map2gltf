@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { exportGLB } from '../../src/pipeline/08-binary-export.js';
+import { exportGLB, exportScene } from '../../src/pipeline/08-binary-export.js';
 import { NodeIO } from '@gltf-transform/core';
-import type { MaterialBatch, Cluster, BVHNode, Vertex, ParsedEntity } from '../../src/types.js';
+import type { MaterialBatch, Cluster, BVHNode, Vertex, ParsedEntity, TextureMap } from '../../src/types.js';
 
 function makeVertex(x: number, y: number, z: number): Vertex {
     return {
@@ -43,6 +43,58 @@ function makeEntities(): ParsedEntity[] {
 }
 
 describe('08-binary-export', () => {
+    it('should produce parseable text glTF bytes with an inlined buffer', async () => {
+        const vertices = [makeVertex(0, 0, 0), makeVertex(1, 0, 0), makeVertex(1, 1, 0)];
+        const batches: MaterialBatch[] = [makeBatch(0, 'brick', vertices)];
+        const clusters: Cluster[] = [makeCluster(0, vertices, 0, true)];
+        const bvh: BVHNode[] = [{
+            bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 1, y: 1, z: 0 } },
+            left: -1,
+            right: -1,
+            firstCluster: 0,
+            clusterCount: 1,
+        }];
+
+        const gltf = await exportScene(batches, clusters, bvh, [], makeEntities(), undefined, 'gltf');
+        const json = JSON.parse(new TextDecoder().decode(gltf)) as {
+            asset?: { version?: string };
+            buffers?: Array<{ uri?: string; byteLength?: number }>;
+        };
+
+        expect(new TextDecoder().decode(gltf).trimStart().startsWith('{')).toBe(true);
+        expect(json.asset?.version).toBe('2.0');
+        expect(json.buffers).toHaveLength(1);
+        expect(json.buffers?.[0]?.uri?.startsWith('data:application/octet-stream;base64,')).toBe(true);
+    });
+
+    it('should inline textured image resources in text glTF output', async () => {
+        const vertices = [makeVertex(0, 0, 0), makeVertex(1, 0, 0), makeVertex(1, 1, 0)];
+        const batches: MaterialBatch[] = [makeBatch(0, 'brick', vertices)];
+        const clusters: Cluster[] = [makeCluster(0, vertices, 0, true)];
+        const bvh: BVHNode[] = [{
+            bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 1, y: 1, z: 0 } },
+            left: -1,
+            right: -1,
+            firstCluster: 0,
+            clusterCount: 1,
+        }];
+        const textureMap: TextureMap = new Map([
+            ['brick', {
+                relativePath: 'brick.png',
+                size: [32, 32],
+            }],
+        ]);
+
+        const gltf = await exportScene(batches, clusters, bvh, [], makeEntities(), textureMap, 'gltf', 'textures');
+        const json = JSON.parse(new TextDecoder().decode(gltf)) as {
+            images?: Array<{ uri?: string; bufferView?: number; mimeType?: string }>;
+        };
+
+        expect(json.images).toHaveLength(1);
+        expect(json.images?.[0]?.uri).toBe('textures/brick.png');
+        expect(json.images?.[0]?.bufferView).toBeUndefined();
+    });
+
     it('should produce valid GLB bytes', async () => {
         const vertices = [makeVertex(0, 0, 0), makeVertex(1, 0, 0), makeVertex(1, 1, 0)];
         const batches: MaterialBatch[] = [makeBatch(0, 'brick', vertices)];

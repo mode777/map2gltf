@@ -12,6 +12,7 @@ describe('NodeTextureProvider', () => {
 
         expect(info).not.toBeNull();
         expect(info!.relativePath).toBe('brick_wall.png');
+        expect(Object.keys(info!)).not.toContain('data');
         expect(info!.size[0]).toBe(128);
         expect(info!.size[1]).toBe(64);
     });

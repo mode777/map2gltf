@@ -51,6 +51,11 @@ import { NodeTextureProvider } from 'map2gltf/node';
 
 const provider = new NodeTextureProvider('./textures');
 const glb = await compile(mapSource, { textureProvider: provider });
+
+const gltf = await compile(mapSource, {
+    textureProvider: provider,
+    exportFormat: 'gltf',
+});
 ```
 
 ### Package Exports
@@ -98,9 +103,9 @@ export interface TextureInfo { /* as defined in Feature 12 */ }
 export type TextureMap = Map<string, TextureInfo | null>;
 ```
 
-> **Implementation note — async API:** Both `compile()` and `compileWithDiagnostics()` are `async` functions returning Promises. This is because the GLB export feature uses `@gltf-transform/core`'s async `writeBinary()`. All callers must `await` the result.
+> **Implementation note — async API:** Both `compile()` and `compileWithDiagnostics()` are `async` functions returning Promises. This is because the export feature uses `@gltf-transform/core`'s async `writeBinary()` / `writeJSON()` APIs. All callers must `await` the result.
 
-The `compile()` function applies default values for all omitted `CompileOptions` fields. The `compileWithDiagnostics()` variant returns both the GLB output and accumulated warnings/errors.
+The `compile()` function applies default values for all omitted `CompileOptions` fields. The `compileWithDiagnostics()` variant returns both the serialized output bytes and accumulated warnings/errors. The return property remains named `glb` for backward compatibility even when `exportFormat: 'gltf'` is selected.
 
 ## Published Files
 
@@ -170,8 +175,9 @@ The `prepublishOnly` script ensures a fresh build before every `npm publish`:
 1. **Public export surface:** Import `map2gltf` from the built `dist/` output. Assert that `compile`, `compileWithDiagnostics`, and the option/diagnostic types are accessible.
 2. **Default options:** Call `compile(mapSource)` with no options argument. Assert it produces a valid GLB (non-zero `Uint8Array`) without throwing.
 3. **Partial options:** Call `compile(mapSource, { maxClusterSize: 256 })` with a subset of options. Assert defaults are applied for omitted fields and compilation succeeds.
-4. **Diagnostics passthrough:** Call `compileWithDiagnostics()` with a map containing a missing texture reference. Assert `diagnostics.warnings` contains at least one entry.
-5. **No Node.js APIs in core:** Static analysis (grep or lint rule): assert that no file in `src/pipeline/` or `src/math/` imports from `node:fs`, `node:path`, or other Node built-in modules.
+4. **Text glTF export:** Call `compile(mapSource, { exportFormat: 'gltf' })`. Assert the returned bytes decode as valid JSON and include a base64 `buffers[0].uri`.
+5. **Diagnostics passthrough:** Call `compileWithDiagnostics()` with a map containing a missing texture reference. Assert `diagnostics.warnings` contains at least one entry.
+6. **No Node.js APIs in core:** Static analysis (grep or lint rule): assert that no file in `src/pipeline/` or `src/math/` imports from `node:fs`, `node:path`, or other Node built-in modules.
 
 ### Dependency
 

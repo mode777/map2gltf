@@ -1,6 +1,17 @@
 import { Document, NodeIO } from '@gltf-transform/core';
-import type { MaterialBatch, Cluster, BVHNode, Vec3, ParsedEntity, TextureMap } from '../types.js';
+import type { MaterialBatch, Cluster, BVHNode, Vec3, ParsedEntity, TextureMap, ExportFormat } from '../types.js';
 import { mergeAABBs } from '../math/aabb.js';
+
+type JSONDocument = Awaited<ReturnType<NodeIO['writeJSON']>>;
+type SerializableImage = { uri?: string; name?: string; bufferView?: number };
+
+const GLB_HEADER_LENGTH = 12;
+const GLB_CHUNK_HEADER_LENGTH = 8;
+const GLB_JSON_CHUNK_TYPE = 0x4E4F534A;
+const GLB_MAGIC = 0x46546c67;
+const GLB_VERSION = 2;
+
+const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 function convertCoord(v: Vec3): [number, number, number] {
     // Quake Z-up → glTF Y-up: rotate -90° around X
@@ -30,13 +41,129 @@ function convertAABB(aabb: { min: Vec3; max: Vec3 }): { min: number[]; max: numb
     return { min, max };
 }
 
-export async function exportGLB(
+function encodeBase64(bytes: Uint8Array): string {
+    let output = '';
+
+    for (let i = 0; i < bytes.length; i += 3) {
+        const a = bytes[i]!;
+        const b = bytes[i + 1];
+        const c = bytes[i + 2];
+        const chunk = (a << 16) | ((b ?? 0) << 8) | (c ?? 0);
+
+        output += BASE64_ALPHABET[(chunk >> 18) & 0x3f]!;
+        output += BASE64_ALPHABET[(chunk >> 12) & 0x3f]!;
+        output += b === undefined ? '=' : BASE64_ALPHABET[(chunk >> 6) & 0x3f]!;
+        output += c === undefined ? '=' : BASE64_ALPHABET[chunk & 0x3f]!;
+    }
+
+    return output;
+}
+
+function inlineBufferResources(jsonDoc: JSONDocument): void {
+    for (const buffer of jsonDoc.json.buffers ?? []) {
+        const uri = buffer.uri;
+        if (!uri || uri.startsWith('data:')) {
+            continue;
+        }
+
+        const resource = jsonDoc.resources[uri];
+        if (!resource) {
+            continue;
+        }
+
+        buffer.uri = `data:application/octet-stream;base64,${encodeBase64(resource)}`;
+        delete jsonDoc.resources[uri];
+    }
+}
+
+function normalizeRelativeURI(uri: string, label: string): string {
+    const normalized = uri.replace(/\\/g, '/').replace(/\/$/, '');
+    if (/^(?:[a-zA-Z][a-zA-Z\d+.-]*:|\/)/.test(normalized)) {
+        throw new Error(`${label} must be a relative URI, got '${uri}'`);
+    }
+    return normalized;
+}
+
+function resolveTextureURI(textureBasePath: string | undefined, relativePath: string): string {
+    const normalizedPath = normalizeRelativeURI(relativePath, 'Texture path');
+    if (!textureBasePath || textureBasePath === '.') {
+        return normalizedPath;
+    }
+
+    const normalizedBase = normalizeRelativeURI(textureBasePath, 'Texture base path');
+    return `${normalizedBase}/${normalizedPath}`;
+}
+
+function patchExternalImageURIs(json: { images?: SerializableImage[] }): void {
+    for (const image of json.images ?? []) {
+        if (!image.uri && typeof image.name === 'string') {
+            image.uri = normalizeRelativeURI(image.name, 'Texture URI');
+        }
+
+        delete image.bufferView;
+    }
+}
+
+function createPaddedChunk(bytes: Uint8Array, paddingByte: number): Uint8Array {
+    const paddedLength = (bytes.length + 3) & ~3;
+    const padded = new Uint8Array(paddedLength);
+    padded.fill(paddingByte);
+    padded.set(bytes);
+    return padded;
+}
+
+function patchGLBExternalImageURIs(glb: Uint8Array): Uint8Array {
+    const view = new DataView(glb.buffer, glb.byteOffset, glb.byteLength);
+    if (view.getUint32(0, true) !== GLB_MAGIC) {
+        throw new Error('Invalid GLB header');
+    }
+
+    const jsonChunkLength = view.getUint32(GLB_HEADER_LENGTH, true);
+    const jsonChunkType = view.getUint32(GLB_HEADER_LENGTH + 4, true);
+    if (jsonChunkType !== GLB_JSON_CHUNK_TYPE) {
+        throw new Error('Missing GLB JSON chunk');
+    }
+
+    const jsonStart = GLB_HEADER_LENGTH + GLB_CHUNK_HEADER_LENGTH;
+    const jsonEnd = jsonStart + jsonChunkLength;
+    const jsonText = new TextDecoder().decode(glb.slice(jsonStart, jsonEnd)).replace(/[\u0000\u0020]+$/u, '');
+    const json = JSON.parse(jsonText) as { images?: SerializableImage[] };
+    patchExternalImageURIs(json);
+
+    const jsonBytes = new TextEncoder().encode(JSON.stringify(json));
+    const paddedJson = createPaddedChunk(jsonBytes, 0x20);
+    const remainingChunks = glb.slice(jsonEnd);
+    const patched = new Uint8Array(GLB_HEADER_LENGTH + GLB_CHUNK_HEADER_LENGTH + paddedJson.length + remainingChunks.length);
+    patched.set(paddedJson, GLB_HEADER_LENGTH + GLB_CHUNK_HEADER_LENGTH);
+    patched.set(remainingChunks, GLB_HEADER_LENGTH + GLB_CHUNK_HEADER_LENGTH + paddedJson.length);
+
+    const patchedView = new DataView(patched.buffer);
+    patchedView.setUint32(0, GLB_MAGIC, true);
+    patchedView.setUint32(4, GLB_VERSION, true);
+    patchedView.setUint32(8, patched.length, true);
+    patchedView.setUint32(GLB_HEADER_LENGTH, paddedJson.length, true);
+    patchedView.setUint32(GLB_HEADER_LENGTH + 4, GLB_JSON_CHUNK_TYPE, true);
+
+    return patched;
+}
+
+async function writeGLTF(doc: Document): Promise<Uint8Array> {
+    const io = new NodeIO();
+    const jsonDoc = await io.writeJSON(doc);
+    inlineBufferResources(jsonDoc);
+    patchExternalImageURIs(jsonDoc.json as { images?: SerializableImage[] });
+    return new TextEncoder().encode(JSON.stringify(jsonDoc.json, null, 2));
+}
+
+export async function exportScene(
     batches: MaterialBatch[],
     worldClusters: Cluster[],
     bvh: BVHNode[],
     entityClusters: Cluster[] = [],
     entities: ParsedEntity[] = [],
     textureMap?: TextureMap,
+    format: ExportFormat = 'glb',
+    textureBasePath?: string,
 ): Promise<Uint8Array> {
     const doc = new Document();
     doc.getRoot().getAsset().generator = 'map2gltf';
@@ -45,15 +172,17 @@ export async function exportGLB(
     const buf = doc.createBuffer();
 
     // Deduplicate glTF images/textures by relativePath
+    // Deduplicate glTF images/textures by exported URI.
     const imageMap = new Map<string, ReturnType<Document['createTexture']>>();
 
-    function getOrCreateTexture(relativePath: string): ReturnType<Document['createTexture']> {
-        let tex = imageMap.get(relativePath);
+    function getOrCreateTexture(textureInfo: NonNullable<TextureMap extends Map<string, infer TValue> ? Exclude<TValue, null> : never>): ReturnType<Document['createTexture']> {
+        const textureURI = resolveTextureURI(textureBasePath, textureInfo.relativePath);
+        let tex = imageMap.get(textureURI);
         if (!tex) {
-            tex = doc.createTexture(relativePath)
-                .setURI(relativePath)
+            tex = doc.createTexture(textureURI)
+                .setURI(textureURI)
                 .setMimeType('image/png');
-            imageMap.set(relativePath, tex);
+            imageMap.set(textureURI, tex);
         }
         return tex;
     }
@@ -70,7 +199,7 @@ export async function exportGLB(
                 .setRoughnessFactor(1);
 
             if (texInfo) {
-                const tex = getOrCreateTexture(texInfo.relativePath);
+                const tex = getOrCreateTexture(texInfo);
                 mat.setBaseColorTexture(tex);
             } else {
                 mat.setBaseColorFactor([1, 0, 1, 1]);
@@ -223,6 +352,22 @@ export async function exportGLB(
     }
 
     // Write GLB
+    if (format === 'gltf') {
+        return await writeGLTF(doc);
+    }
+
     const io = new NodeIO();
-    return await io.writeBinary(doc);
+    return patchGLBExternalImageURIs(await io.writeBinary(doc));
+}
+
+export async function exportGLB(
+    batches: MaterialBatch[],
+    worldClusters: Cluster[],
+    bvh: BVHNode[],
+    entityClusters: Cluster[] = [],
+    entities: ParsedEntity[] = [],
+    textureMap?: TextureMap,
+    textureBasePath?: string,
+): Promise<Uint8Array> {
+    return await exportScene(batches, worldClusters, bvh, entityClusters, entities, textureMap, 'glb', textureBasePath);
 }

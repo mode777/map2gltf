@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, relative, isAbsolute } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { compile, compileWithDiagnostics } from './compiler.js';
 import type { CompileOptions, Diagnostics } from './compiler.js';
 import { NodeTextureProvider } from './providers/node-texture-provider.js';
+import type { ExportFormat } from './types.js';
 
 export const USAGE_TEXT = `Usage: map2gltf <input.map> [options]
 
 Options:
   -o, --output <file>        Output .glb path (default: <input>.glb)
+    --format <glb|gltf>        Output format (default: glb)
   --default-texture-size <n> Default texture dimensions (default: 64)
   --grid-cell-size <n>       Clustering grid cell size (default: 16)
   --max-cluster-size <n>     Max triangles per cluster (default: 512)
@@ -50,6 +52,26 @@ export interface CliRuntime {
     stderr(message: string): void;
 }
 
+function toPosixPath(path: string): string {
+    return path.replace(/\\/g, '/');
+}
+
+function computeTextureBasePath(outputFile: string, textureBasePath: string, runtime: CliRuntime): string | undefined {
+    const resolvedOutputFile = isAbsolute(outputFile) ? outputFile : runtime.resolvePath(outputFile);
+    const resolvedTextureBasePath = isAbsolute(textureBasePath) ? textureBasePath : runtime.resolvePath(textureBasePath);
+    const relativeTexturePath = toPosixPath(relative(dirname(resolvedOutputFile), resolvedTextureBasePath));
+
+    if (!relativeTexturePath || relativeTexturePath === '.') {
+        return undefined;
+    }
+
+    if (/^(?:[a-zA-Z][a-zA-Z\d+.-]*:|\/)/.test(relativeTexturePath)) {
+        throw new Error(`Texture path must resolve to a relative URI from the output file: ${textureBasePath}`);
+    }
+
+    return relativeTexturePath;
+}
+
 const defaultRuntime: CliRuntime = {
     readFile: path => readFileSync(path, 'utf-8'),
     writeFile: (path, data) => writeFileSync(path, data),
@@ -77,6 +99,15 @@ function readIntegerFlag(args: string[], index: number, flag: string): number {
     return value;
 }
 
+function readFormatFlag(args: string[], index: number, flag: string): ExportFormat {
+    const raw = readValueFlag(args, index, flag);
+    const value = raw.toLowerCase();
+    if (value !== 'glb' && value !== 'gltf') {
+        throw new Error(`Invalid value for ${flag}: ${raw}`);
+    }
+    return value;
+}
+
 export function parseCliArgs(args: string[]): CliCommand {
     if (args.length === 0 || args.includes('-h') || args.includes('--help')) {
         return { kind: 'help' };
@@ -87,6 +118,7 @@ export function parseCliArgs(args: string[]): CliCommand {
     let outputFile: string | undefined;
     let verbose = false;
     let texturePath: string | undefined;
+    let exportFormat: ExportFormat | undefined;
 
     for (let i = 0; i < args.length; i++) {
         const arg = args[i]!;
@@ -94,6 +126,10 @@ export function parseCliArgs(args: string[]): CliCommand {
             case '-o':
             case '--output':
                 outputFile = readValueFlag(args, i, arg);
+                i++;
+                break;
+            case '--format':
+                exportFormat = readFormatFlag(args, i, arg);
                 i++;
                 break;
             case '-v':
@@ -148,14 +184,18 @@ export function parseCliArgs(args: string[]): CliCommand {
         textureProvider = new NodeTextureProvider(texturePath);
     }
 
+    const compileOptionsWithFormat = exportFormat
+        ? { ...compileOptions, exportFormat }
+        : compileOptions;
+
     return {
         kind: 'compile',
         inputFile,
         ...(outputFile ? { outputFile } : {}),
         verbose,
         compileOptions: textureProvider
-            ? { ...compileOptions, textureProvider }
-            : compileOptions,
+            ? { ...compileOptionsWithFormat, textureProvider, textureBasePath: texturePath }
+            : compileOptionsWithFormat,
     };
 }
 
@@ -168,11 +208,18 @@ export async function runCli(args: string[], runtime: CliRuntime = defaultRuntim
         }
 
         const inputPath = runtime.resolvePath(command.inputFile);
-        const outputFile = command.outputFile ?? inputPath.replace(/\.map$/i, '.glb');
+        const exportFormat = command.compileOptions.exportFormat ?? 'glb';
+        const defaultExtension = exportFormat === 'gltf' ? '.gltf' : '.glb';
+        const outputFile = command.outputFile ?? inputPath.replace(/\.map$/i, defaultExtension);
         const mapSource = runtime.readFile(inputPath);
+        const compileOptions = { ...command.compileOptions };
+
+        if (compileOptions.textureProvider && compileOptions.textureBasePath) {
+            compileOptions.textureBasePath = computeTextureBasePath(outputFile, compileOptions.textureBasePath, runtime);
+        }
 
         if (command.verbose) {
-            const { glb, diagnostics } = await runtime.compileWithDiagnostics(mapSource, command.compileOptions);
+            const { glb, diagnostics } = await runtime.compileWithDiagnostics(mapSource, compileOptions);
             for (const info of diagnostics.info) {
                 runtime.stderr(`[INFO] [${info.step}] ${info.message}${info.location ? ` (${info.location})` : ''}`);
             }
@@ -187,7 +234,7 @@ export async function runCli(args: string[], runtime: CliRuntime = defaultRuntim
             }
             runtime.writeFile(outputFile, glb);
         } else {
-            const glb = await runtime.compile(mapSource, command.compileOptions);
+            const glb = await runtime.compile(mapSource, compileOptions);
             runtime.writeFile(outputFile, glb);
         }
 

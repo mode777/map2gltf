@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { compile, compileWithDiagnostics, compileDetailed } from '../../src/compiler.js';
+import { NodeTextureProvider } from '../../src/providers/node-texture-provider.js';
 import { NodeIO } from '@gltf-transform/core';
 
 const fixtures = resolve(import.meta.dirname, '../fixtures');
@@ -11,6 +12,20 @@ function readFixture(name: string): string {
 }
 
 describe('integration: compile()', () => {
+    it('should compile box.map to text glTF when requested', async () => {
+        const source = readFixture('box.map');
+        const gltf = await compile(source, { exportFormat: 'gltf' });
+        const text = new TextDecoder().decode(gltf);
+        const json = JSON.parse(text) as {
+            asset?: { version?: string };
+            buffers?: Array<{ uri?: string }>;
+        };
+
+        expect(text.trimStart().startsWith('{')).toBe(true);
+        expect(json.asset?.version).toBe('2.0');
+        expect(json.buffers?.[0]?.uri?.startsWith('data:application/octet-stream;base64,')).toBe(true);
+    });
+
     it('should compile box.map to valid GLB', async () => {
         const source = readFixture('box.map');
         const glb = await compile(source);
@@ -50,6 +65,24 @@ describe('integration: compile()', () => {
         const doc = await io.readBinary(glb);
         const materials = doc.getRoot().listMaterials();
         expect(materials.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should compile textured-room.map to text glTF with exact external image URIs', async () => {
+        const source = readFixture('textured-room.map');
+        const gltf = await compile(source, {
+            exportFormat: 'gltf',
+            textureProvider: new NodeTextureProvider(resolve(fixtures, 'textures')),
+            textureBasePath: 'textures',
+        });
+        const json = JSON.parse(new TextDecoder().decode(gltf)) as {
+            images?: Array<{ uri?: string }>;
+        };
+
+        expect(json.images?.map(image => image.uri)).toEqual([
+            'textures/__tb_empty.png',
+            'textures/grid_32.png',
+            'textures/origin.png',
+        ]);
     });
 
     it('should produce diagnostics without throwing', async () => {

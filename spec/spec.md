@@ -344,7 +344,7 @@ import { triangulate } from './pipeline/04-triangulation.js';
 import { mergeMaterials } from './pipeline/05-material-merge.js';
 import { clusterGeometry } from './pipeline/06-clustering.js';
 import { buildBVH } from './pipeline/07-bvh-construction.js';
-import { exportGLB } from './pipeline/08-binary-export.js';
+import { exportScene } from './pipeline/08-binary-export.js';
 import { resolveTextures } from './pipeline/12-texture-resolution.js';
 
 export async function compile(mapSource: string, options: CompileOptions): Promise<Uint8Array> {
@@ -369,14 +369,16 @@ export async function compile(mapSource: string, options: CompileOptions): Promi
     const allPolygons = [...clipped, ...entityPolys];
     const visiblePolygons = allPolygons.filter(p => p.face.textureName !== 'clip');
 
-    // Handle empty map: produce a minimal valid GLB
+    // Handle empty map: produce a minimal serialized asset in the requested format
     if (visiblePolygons.length === 0) {
-        return exportGLB(
+        return exportScene(
             [],
             [],
             [{ bounds: { min: {x:0,y:0,z:0}, max: {x:0,y:0,z:0} }, left: -1, right: -1, firstCluster: 0, clusterCount: 0 }],
             [],
             entities,
+            undefined,
+            options.exportFormat,
         );
     }
 
@@ -397,16 +399,16 @@ export async function compile(mapSource: string, options: CompileOptions): Promi
     const worldClusters = clusters.filter(cluster => cluster.isWorldspawn);
     const entityClusters = clusters.filter(cluster => !cluster.isWorldspawn);
     const bvh         = buildBVH(worldClusters);
-    const glb         = await exportGLB(batches, worldClusters, bvh, entityClusters, entities, textureMap);
+    const glb         = await exportScene(batches, worldClusters, bvh, entityClusters, entities, textureMap, options.exportFormat);
     return glb;
 }
 ```
 
-> **Implementation note — async API:** The `compile()` and `compileWithDiagnostics()` functions are `async` and return `Promise<Uint8Array>` / `Promise<{glb, diagnostics}>` respectively. This is because `exportGLB()` uses `@gltf-transform/core`'s `NodeIO.writeBinary()` which is async. Callers must `await` the result.
+> **Implementation note — async API:** The `compile()` and `compileWithDiagnostics()` functions are `async` and return `Promise<Uint8Array>` / `Promise<{glb, diagnostics}>` respectively. This is because `exportScene()` uses `@gltf-transform/core`'s async `NodeIO.writeBinary()` / `writeJSON()` APIs. Callers must `await` the result.
 >
-> **Implementation note — empty maps:** If the parsed map produces zero visible polygons, the compiler returns a minimal valid GLB with a degenerate worldspawn BVH leaf and no entity branch rather than throwing.
+> **Implementation note — empty maps:** If the parsed map produces zero visible polygons, the compiler returns a minimal valid serialized asset in the requested format with a degenerate worldspawn BVH leaf and no entity branch rather than throwing.
 >
-> **Implementation note — multi-entity handling:** Only entity 0 (worldspawn) brushes participate in CSG. Other entities (func_wall, func_door, etc.) are passed through to triangulation without CSG, remain separate during clustering, and are exported as their own scene objects in the GLB.
+> **Implementation note — multi-entity handling:** Only entity 0 (worldspawn) brushes participate in CSG. Other entities (func_wall, func_door, etc.) are passed through to triangulation without CSG, remain separate during clustering, and are exported as their own scene objects in the serialized glTF output.
 
 ### Design Principles
 
@@ -446,6 +448,7 @@ export async function compile(mapSource: string, options: CompileOptions): Promi
         minClusterSize: number;      // default: 8
         bvhLeafThreshold: number;    // default: 4
         sahCandidates: number;       // default: 12
+        exportFormat: 'glb' | 'gltf';               // default: 'glb'
         textureProvider: TextureProvider | undefined;  // default: undefined (no texture resolution)
         textureBasePath: string | undefined;           // default: undefined
         skipWorldspawnClustering: boolean | undefined;  // default: false
@@ -456,7 +459,7 @@ export async function compile(mapSource: string, options: CompileOptions): Promi
 
     > **Implementation note — `exactOptionalPropertyTypes`:** Because `tsconfig.json` enables `exactOptionalPropertyTypes: true`, optional fields in `CompileOptions` use `| undefined` in their type declaration (e.g. `textureProvider: TextureProvider | undefined`) rather than the `?:` syntax. This ensures callers can explicitly pass `undefined` while keeping the field required in the full `CompileOptions` type.
 
-    > **Implementation note — texture resolution:** The `textureProvider` and `textureBasePath` fields replace the previous `textureSizes: Map<string, [number, number]>`. The provider is invoked during the new texture resolution step ([Feature 12](feature/12-texture-resolution.md)) to build a `TextureMap` that is then consumed by triangulation ([Feature 4](feature/04-triangulation.md)) and binary export ([Feature 8](feature/08-binary-export.md)).
+    > **Implementation note — texture resolution:** The `textureProvider` and `textureBasePath` fields replace the previous `textureSizes: Map<string, [number, number]>`. The provider is invoked during the new texture resolution step ([Feature 12](feature/12-texture-resolution.md)) to build a `TextureMap`, while `textureBasePath` provides the asset-relative URI prefix used by binary export ([Feature 8](feature/08-binary-export.md)) so textures remain external in both `.gltf` and `.glb` output.
 
     > **Implementation note — hardcoded parameters:** In the current implementation, pipeline features (02 through 07) use hardcoded constants for epsilon, seed extent, grid cell size, cluster limits, BVH thresholds, and SAH candidates rather than reading from `CompileOptions`. The `CompileOptions` interface is defined and accepted by `compile()`, but only `textureProvider`/`textureBasePath`, `defaultTextureSize`, clustering parameters, and `skipWorldspawnClustering` are actively threaded through to the pipeline. The remaining parameters serve as documentation of the chosen values and as API surface for future configurability.
 

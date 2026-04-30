@@ -8,10 +8,10 @@ import { triangulate } from './pipeline/04-triangulation.js';
 import { mergeMaterials } from './pipeline/05-material-merge.js';
 import { clusterGeometry } from './pipeline/06-clustering.js';
 import { buildBVH } from './pipeline/07-bvh-construction.js';
-import { exportGLB } from './pipeline/08-binary-export.js';
+import { exportScene } from './pipeline/08-binary-export.js';
 
 export type { CompileOptions, Diagnostics, CompileStats };
-export type { DiagnosticMessage, TextureProvider, TextureInfo, TextureMap } from './types.js';
+export type { DiagnosticMessage, TextureProvider, TextureInfo, TextureMap, ExportFormat } from './types.js';
 
 function resolveOptions(partial?: Partial<CompileOptions>): CompileOptions {
     if (!partial) return { ...DEFAULT_OPTIONS };
@@ -25,6 +25,7 @@ function resolveOptions(partial?: Partial<CompileOptions>): CompileOptions {
         minClusterSize: partial.minClusterSize ?? DEFAULT_OPTIONS.minClusterSize,
         bvhLeafThreshold: partial.bvhLeafThreshold ?? DEFAULT_OPTIONS.bvhLeafThreshold,
         sahCandidates: partial.sahCandidates ?? DEFAULT_OPTIONS.sahCandidates,
+        exportFormat: partial.exportFormat ?? DEFAULT_OPTIONS.exportFormat,
         textureProvider: partial.textureProvider ?? undefined,
         textureBasePath: partial.textureBasePath ?? undefined,
         skipWorldspawnClustering: partial.skipWorldspawnClustering ?? DEFAULT_OPTIONS.skipWorldspawnClustering,
@@ -68,13 +69,13 @@ export async function compileWithDiagnostics(
 
     if (visiblePolygons.length === 0) {
         // Empty map — return minimal GLB
-        const glb = await exportGLB([], [], [{
+        const glb = await exportScene([], [], [{
             bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
             left: -1,
             right: -1,
             firstCluster: 0,
             clusterCount: 0,
-        }], [], entities);
+        }], [], entities, undefined, opts.exportFormat, opts.textureBasePath);
         return { glb, diagnostics };
     }
 
@@ -90,7 +91,7 @@ export async function compileWithDiagnostics(
     const worldClusters = clusters.filter(cluster => cluster.isWorldspawn);
     const entityClusters = clusters.filter(cluster => !cluster.isWorldspawn);
     const bvh = buildBVH(worldClusters, { leafThreshold: opts.bvhLeafThreshold });
-    const glb = await exportGLB(batches, worldClusters, bvh, entityClusters, entities, textureMap);
+    const glb = await exportScene(batches, worldClusters, bvh, entityClusters, entities, textureMap, opts.exportFormat, opts.textureBasePath);
     return { glb, diagnostics };
 }
 
@@ -143,7 +144,7 @@ export async function compileDetailed(
             firstCluster: 0,
             clusterCount: 0,
         }] as import('./types.js').BVHNode[];
-        const glb = await exportGLB([], [], emptyBVH, [], entities);
+        const glb = await exportScene([], [], emptyBVH, [], entities, undefined, opts.exportFormat, opts.textureBasePath);
         const compileTimeMs = performance.now() - startTime;
         const stats: CompileStats = {
             entityCount: entities.length,
@@ -175,7 +176,7 @@ export async function compileDetailed(
     const worldClusters = clusters.filter(cluster => cluster.isWorldspawn);
     const entityClusters = clusters.filter(cluster => !cluster.isWorldspawn);
     const bvh = buildBVH(worldClusters, { leafThreshold: opts.bvhLeafThreshold });
-    const glb = await exportGLB(batches, worldClusters, bvh, entityClusters, entities, textureMap);
+    const glb = await exportScene(batches, worldClusters, bvh, entityClusters, entities, textureMap, opts.exportFormat, opts.textureBasePath);
     const compileTimeMs = performance.now() - startTime;
 
     const bvhLeafCount = bvh.filter(n => n.left === -1).length;
